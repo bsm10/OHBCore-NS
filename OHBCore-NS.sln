@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29215.179
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OHBCore-NS", "OHBCore-NS.csproj", "{197FA535-75CD-4391-B12F-439F15A4D0B2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{197FA535-75CD-4391-B12F-439F15A4D0B2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{197FA535-75CD-4391-B12F-439F15A4D0B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{197FA535-75CD-4391-B12F-439F15A4D0B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{197FA535-75CD-4391-B12F-439F15A4D0B2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {9D194EE9-5081-4F34-9008-029C78CD0ED3}
+	EndGlobalSection
+EndGlobal
