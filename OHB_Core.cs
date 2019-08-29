@@ -74,7 +74,6 @@ namespace OHBEditor
                 using (WebClient client = new WebClient())
                 {
                     client.Credentials = new NetworkCredential("granitmar1_ohbed", "Va3NeMHzyY");
-                    //client.BaseAddress = "ftp://ftp.s51.freehost.com.ua";www.onebeauty.com.ua/files/
                     byte[] responseArray = await client.UploadFileTaskAsync("ftp://ftp.s51.freehost.com.ua/" + fileName,
                                                                             "STOR",
                                                                             Path.Combine(Files.FolderOHB_Local, fileName));
