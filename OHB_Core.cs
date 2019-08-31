@@ -1,5 +1,7 @@
 ﻿using Newtonsoft.Json;
+using OHBEditor.FtpClient;
 using OHBEditor.Helpers;
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -70,22 +72,35 @@ namespace OHBEditor
             {
                 _progress.Report("Uploading " + fileName + " to ftp...");
 
+                // Создаем объект подключения по FTP
+                Client client = new Client("ftp://ftp.s51.freehost.com.ua/", "granitmar1_ohbed", "Va3NeMHzyY");
                 
-                using (WebClient client = new WebClient())
-                {
-                    client.Credentials = new NetworkCredential("granitmar1_ohbed", "Va3NeMHzyY");
-                    byte[] responseArray = await client.UploadFileTaskAsync("ftp://ftp.s51.freehost.com.ua/" + fileName,
-                                                                            "STOR",
-                                                                            Path.Combine(Files.FolderOHB_Local, fileName));
+                string file = Path.Combine(Files.FolderOHB_Local, fileName);
+                string newFileName = Path.GetFileNameWithoutExtension(file)
+                                     + DateTime.Now.ToString("dd-MM-yyyy HH:mm") + Path.GetExtension(file);
+                _progress.Report(await client.RenameAsync(fileName, newFileName));
+                _progress.Report(await client.UploadFileAsync(Path.Combine(Files.FolderOHB_Local, fileName), 
+                                                                "ftp://ftp.s51.freehost.com.ua/" + fileName));
 
-                    _progress.Report(Encoding.Default.GetString(responseArray) == "" ? "Ok!" :
-                                     Encoding.Default.GetString(responseArray));
-                }
+                //using (WebClient client = new WebClient())
+                //{
+                //    client.Credentials = new NetworkCredential("granitmar1_ohbed", "Va3NeMHzyY");
+                //    byte[] responseArray = await client.UploadFileTaskAsync("ftp://ftp.s51.freehost.com.ua/" + fileName,
+                //                                                            "STOR",
+                //                                                            Path.Combine(Files.FolderOHB_Local, fileName));
 
+                //    _progress.Report(Encoding.Default.GetString(responseArray) == "" ? "Ok!" :
+                //                     Encoding.Default.GetString(responseArray));
+                //}
+                _progress.Report("Ok!");
             }
             catch (Exception ex)
             {
                 _progress.Report(ex.Message);
+            }
+            finally
+            {
+                _progress.Report("Файл не удалось передать на фтп.");
             }
         }
         public static async Task MakeRequestProm()
@@ -703,6 +718,257 @@ namespace OHBEditor
             }
 
         }
+    }
+
+    namespace FtpClient
+    {
+        public class Client
+        {
+            private string password;
+            private string userName;
+            private string uri;
+            private int bufferSize = 1024;
+
+            public bool Passive = true;
+            public bool Binary = true;
+            public bool EnableSsl = false;
+            public bool Hash = false;
+
+            public Client(string uri, string userName, string password)
+            {
+                this.uri = uri;
+                this.userName = userName;
+                this.password = password;
+            }
+
+            public string ChangeWorkingDirectory(string path)
+            {
+                uri = combine(uri, path);
+
+                return PrintWorkingDirectory();
+            }
+
+            public string DeleteFile(string fileName)
+            {
+                var request = createRequest(combine(uri, fileName), WebRequestMethods.Ftp.DeleteFile);
+
+                return getStatusDescription(request);
+            }
+
+            public string DownloadFile(string source, string dest)
+            {
+                var request = createRequest(combine(uri, source), WebRequestMethods.Ftp.DownloadFile);
+
+                byte[] buffer = new byte[bufferSize];
+
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    using (var stream = response.GetResponseStream())
+                    {
+                        using (var fs = new FileStream(dest, FileMode.OpenOrCreate))
+                        {
+                            int readCount = stream.Read(buffer, 0, bufferSize);
+
+                            while (readCount > 0)
+                            {
+                                if (Hash)
+                                    Console.Write("#");
+
+                                fs.Write(buffer, 0, readCount);
+                                readCount = stream.Read(buffer, 0, bufferSize);
+                            }
+                        }
+                    }
+
+                    return response.StatusDescription;
+                }
+            }
+
+            public DateTime GetDateTimestamp(string fileName)
+            {
+                var request = createRequest(combine(uri, fileName), WebRequestMethods.Ftp.GetDateTimestamp);
+
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    return response.LastModified;
+                }
+            }
+
+            public long GetFileSize(string fileName)
+            {
+                var request = createRequest(combine(uri, fileName), WebRequestMethods.Ftp.GetFileSize);
+
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    return response.ContentLength;
+                }
+            }
+
+            public string[] ListDirectory()
+            {
+                var list = new List<string>();
+
+                var request = createRequest(WebRequestMethods.Ftp.ListDirectory);
+
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    using (var stream = response.GetResponseStream())
+                    {
+                        using (var reader = new StreamReader(stream, true))
+                        {
+                            while (!reader.EndOfStream)
+                            {
+                                list.Add(reader.ReadLine());
+                            }
+                        }
+                    }
+                }
+
+                return list.ToArray();
+            }
+
+            public string[] ListDirectoryDetails()
+            {
+                var list = new List<string>();
+
+                var request = createRequest(WebRequestMethods.Ftp.ListDirectoryDetails);
+
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    using (var stream = response.GetResponseStream())
+                    {
+                        using (var reader = new StreamReader(stream, true))
+                        {
+                            while (!reader.EndOfStream)
+                            {
+                                list.Add(reader.ReadLine());
+                            }
+                        }
+                    }
+                }
+
+                return list.ToArray();
+            }
+
+            public string MakeDirectory(string directoryName)
+            {
+                var request = createRequest(combine(uri, directoryName), WebRequestMethods.Ftp.MakeDirectory);
+
+                return getStatusDescription(request);
+            }
+
+            public string PrintWorkingDirectory()
+            {
+                var request = createRequest(WebRequestMethods.Ftp.PrintWorkingDirectory);
+
+                return getStatusDescription(request);
+            }
+
+            public string RemoveDirectory(string directoryName)
+            {
+                var request = createRequest(combine(uri, directoryName), WebRequestMethods.Ftp.RemoveDirectory);
+
+                return getStatusDescription(request);
+            }
+
+            public async Task<string> RenameAsync(string currentName, string newName)
+            {
+                return await Task.Run(() =>
+                {
+                    var request = createRequest(combine(uri, currentName), WebRequestMethods.Ftp.Rename);
+                    request.RenameTo = newName;
+                    return getStatusDescription(request);
+                });
+            }
+
+            public async Task<string> UploadFileAsync(string source, string destination)
+            {
+                return await Task.Run(() =>
+                {
+                    var request = createRequest(destination, WebRequestMethods.Ftp.UploadFile);
+                    //var request = createRequest(combine(uri, destination), WebRequestMethods.Ftp.UploadFile);
+
+                    using (var stream = request.GetRequestStream())
+                    {
+                        using (var fileStream = System.IO.File.Open(source, FileMode.Open))
+                        {
+                            int num;
+
+                            byte[] buffer = new byte[bufferSize];
+
+                            while ((num = fileStream.Read(buffer, 0, buffer.Length)) > 0)
+                            {
+                                if (Hash)
+                                    Console.Write("#");
+
+                                stream.Write(buffer, 0, num);
+                            }
+                        }
+                    }
+                    return getStatusDescription(request);
+                });
+            }
+
+            public string UploadFileWithUniqueName(string source)
+            {
+                var request = createRequest(WebRequestMethods.Ftp.UploadFileWithUniqueName);
+
+                using (var stream = request.GetRequestStream())
+                {
+                    using (var fileStream = System.IO.File.Open(source, FileMode.Open))
+                    {
+                        int num;
+
+                        byte[] buffer = new byte[bufferSize];
+
+                        while ((num = fileStream.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            if (Hash)
+                                Console.Write("#");
+
+                            stream.Write(buffer, 0, num);
+                        }
+                    }
+                }
+
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    return Path.GetFileName(response.ResponseUri.ToString());
+                }
+            }
+
+            private FtpWebRequest createRequest(string method)
+            {
+                return createRequest(uri, method);
+            }
+
+            private FtpWebRequest createRequest(string uri, string method)
+            {
+                var r = (FtpWebRequest)WebRequest.Create(uri);
+
+                r.Credentials = new NetworkCredential(userName, password);
+                r.Method = method;
+                r.UseBinary = Binary;
+                r.EnableSsl = EnableSsl;
+                r.UsePassive = Passive;
+
+                return r;
+            }
+
+            private string getStatusDescription(FtpWebRequest request)
+            {
+                using (var response = (FtpWebResponse)request.GetResponse())
+                {
+                    return response.StatusDescription;
+                }
+            }
+
+            private string combine(string path1, string path2)
+            {
+                return Path.Combine(path1, path2).Replace("\\", "/");
+            }
+        }
+
     }
 
 }
