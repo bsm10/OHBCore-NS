@@ -37,10 +37,11 @@ namespace OHBEditor
         private static XElement shopTree;
         private static IEnumerable<XElement> ExcludesGoods;//Collection, который содержит исключения которые не надо импортировать
 
-        static IProgress<string> _progress;
-        static IProgress<string> _progress2;
+        static IProgress<string> progress;
+        static IProgress<string> progress2;
 
-        public static TreeView treeViewMaster;
+        public static TreeView treeViewMaster { get; set; }
+        public static TreeView treeViewExcludes { get; set; }
         public static TreeNode MasterNode { get; set; }
         public static TreeNode ExcludesNode { get; set; }
         public static IList<TreeNode> TreeNodeDataShops
@@ -50,27 +51,32 @@ namespace OHBEditor
                 return GetTreeNodes(treeViewMaster).ToList();
             }
         }
-        public static async Task Update(IProgress<string> progress, IProgress<string> progress2, TreeView treeView1, TreeView treeView2)
+        public static void Initialization(IProgress<string> _progress, IProgress<string> _progress2, TreeView treeView1, TreeView treeView2)
         {
-            _progress = progress;
-            _progress2 = progress2;
+            progress = _progress;
+            progress2 = _progress2;
+            treeViewMaster = treeView1;
+            treeViewExcludes = treeView2;
+            progress.Report("Cтартуем...");
+        }
+        public static async Task Update()
+        {
             try
             {
-                await GetShopsAsync(progress, progress2, treeView1, treeView2);
+                await GetShopsAsync();
                 Files.SaveXml(Files.FolderOHB_Local + Files.FileOHB_Shop, shopTree);
-                await UploadFileAsync(Files.FileOHB_Shop, progress);
+                await UploadFileAsync(Files.FileOHB_Shop);
             }
             catch (Exception ex)
             {
-                _progress.Report(ex.ToString());
+                progress.Report(ex.ToString());
             }
         }
-        public static async Task UploadFileAsync(string fileName, IProgress<string> progress)
+        public static async Task UploadFileAsync(string fileName)
         {
-            _progress = progress;
             try
             {
-                _progress.Report("Uploading " + fileName + " to ftp...");
+                progress.Report("Uploading " + fileName + " to ftp...");
 
                 // Создаем объект подключения по FTP
                 Client client = new Client("ftp://ftp.s51.freehost.com.ua/", "granitmar1_ohbed", "Va3NeMHzyY");
@@ -78,29 +84,18 @@ namespace OHBEditor
                 string file = Path.Combine(Files.FolderOHB_Local, fileName);
                 string newFileName = Path.GetFileNameWithoutExtension(file)
                                      + DateTime.Now.ToString("dd-MM-yyyy HH:mm") + Path.GetExtension(file);
-                _progress.Report(await client.RenameAsync(fileName, newFileName));
-                _progress.Report(await client.UploadFileAsync(Path.Combine(Files.FolderOHB_Local, fileName), 
+
+                if (client.ListDirectory().Where(f => f == fileName).Count() > 0)
+                    progress.Report(await client.RenameAsync(fileName, newFileName));
+
+                progress.Report(await client.UploadFileAsync(Path.Combine(Files.FolderOHB_Local, fileName), 
                                                                 "ftp://ftp.s51.freehost.com.ua/" + fileName));
-
-                //using (WebClient client = new WebClient())
-                //{
-                //    client.Credentials = new NetworkCredential("granitmar1_ohbed", "Va3NeMHzyY");
-                //    byte[] responseArray = await client.UploadFileTaskAsync("ftp://ftp.s51.freehost.com.ua/" + fileName,
-                //                                                            "STOR",
-                //                                                            Path.Combine(Files.FolderOHB_Local, fileName));
-
-                //    _progress.Report(Encoding.Default.GetString(responseArray) == "" ? "Ok!" :
-                //                     Encoding.Default.GetString(responseArray));
-                //}
-                _progress.Report("Ok!");
+                progress.Report("Ok!");
+                progress.Report("==================================================");
             }
             catch (Exception ex)
             {
-                _progress.Report(ex.Message);
-            }
-            finally
-            {
-                _progress.Report("Файл не удалось передать на фтп.");
+                progress.Report(ex.Message);
             }
         }
         public static async Task MakeRequestProm()
@@ -217,7 +212,7 @@ namespace OHBEditor
                 //***************************************************************
                 //загружаем магазин
                 Uri uri = new Uri(url_shop);
-                _progress.Report(uri.Host + " загрузка...");
+                progress.Report(uri.Host + " загрузка...");
                 XDocument xYMLCatalog = XDocument.Load(url_shop);
                 xYMLCatalog.Save(Files.FolderOHB_Local + uri.Host + ".xml");
                 //список категорий
@@ -231,7 +226,7 @@ namespace OHBEditor
                 //добавляем Товары в общее дерево 
                 shopTree.Element(shop).Element(offers).Add(ohbGoods);
 
-                _progress.Report("категорий - " + xCategories.Count() + "; товаров в выгрузке - " + allGoods.Count()
+                progress.Report("категорий - " + xCategories.Count() + "; товаров в выгрузке - " + allGoods.Count()
                     + "; товаров с учетом исключений - " + ohbGoods.Count() + "; обновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value);
                 XAttribute xCatalogAttribute = xYMLCatalog.Element(yml_catalog).Attribute(date);
                 DateTime lastUpdate = DateTime.Parse(xCatalogAttribute.Value);//дата последнего обновления
@@ -250,11 +245,11 @@ namespace OHBEditor
             }
             catch (XmlException xmlEx)
             {
-                _progress.Report(xmlEx.Message);
+                progress.Report(xmlEx.Message);
             }
             catch (Exception ex)
             {
-                _progress.Report(ex.Message);
+                progress.Report(ex.Message);
             }
             return null;
 
@@ -269,17 +264,10 @@ namespace OHBEditor
         /// <param name="treeViewMaster1"></param>
         /// <param name="treeViewExcludes"></param>
         /// <returns></returns>
-        public static async Task GetShopsAsync(IProgress<string> progress,
-                                                IProgress<string> progress2,
-                                                TreeView treeViewMaster1,
-                                                TreeView treeViewExcludes
-                                                )
+        public static async Task GetShopsAsync()
         {
             try
             {
-                _progress = progress;
-                _progress2 = progress2;
-                treeViewMaster = treeViewMaster1;
                 //загружаем список магазинов
                 XDocument xdoc = XDocument.Load(Files.FolderOHB_Remote + Files.FileOHB_ListShops);
 
@@ -330,18 +318,18 @@ namespace OHBEditor
             }
             catch (Exception e)
             {
-                _progress.Report("GetShopsAsync - " + e.Message);
+                progress.Report("GetShopsAsync - " + e.Message);
             }
 
         }
 
         private static void Report(string time_update)
         {
-            _progress.Report("Всего категорий - " + shopTree.Element(shop).Element(categories).Elements().Count()
+            progress.Report("Всего категорий - " + shopTree.Element(shop).Element(categories).Elements().Count()
                            + "; товаров - " + shopTree.Element(shop).Element(offers).Elements().Count());
             FileInfo f = new FileInfo(Files.FolderOHB_Local + Files.FileOHB_Shop);
-            _progress.Report("Локальный файл - " + f.FullName + "\r\n" + Math.Round((double)f.Length / 1000000, 2) + " Mb");
-            _progress.Report("Время локального обновления - " + time_update);
+            progress.Report("Локальный файл - " + f.FullName + "\r\n" + Math.Round((double)f.Length / 1000000, 2) + " Mb");
+            progress.Report("Время локального обновления - " + time_update);
         }
         class GoodsComparer : IEqualityComparer<XElement>
         {
@@ -386,11 +374,11 @@ namespace OHBEditor
             }
             catch (XmlException xmlEx)
             {
-                _progress.Report(xmlEx.Message);
+                progress.Report(xmlEx.Message);
             }
             catch (Exception ex)
             {
-                _progress.Report(ex.Message);
+                progress.Report(ex.Message);
             }
             return null;
         }
@@ -459,8 +447,8 @@ namespace OHBEditor
                     }
                     FileInfo fileInfoLocalEcxludes;
                     Files.SaveXml(Files.FolderOHB_Local + Files.FileOHB_Excludes, excludes, out fileInfoLocalEcxludes);
-                    _progress.Report("Добавлено в исключения - " + excludes.Elements().Count() + " наименований");
-                    _progress2.Report(fileInfoLocalEcxludes.FullName);
+                    progress.Report("Добавлено в исключения - " + excludes.Elements().Count() + " наименований");
+                    progress2.Report(fileInfoLocalEcxludes.FullName);
 
                 }
             });
@@ -490,7 +478,7 @@ namespace OHBEditor
             }
             catch (Exception e)
             {
-                _progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
+                progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
                 return null;
             }
         }
@@ -522,7 +510,7 @@ namespace OHBEditor
             }
             catch (Exception e)
             {
-                _progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
+                progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
                 return null;
             }
         }
@@ -875,7 +863,7 @@ namespace OHBEditor
             {
                 return await Task.Run(() =>
                 {
-                    var request = createRequest(combine(uri, currentName), WebRequestMethods.Ftp.Rename);
+                    FtpWebRequest request = createRequest(combine(uri, currentName), WebRequestMethods.Ftp.Rename);
                     request.RenameTo = newName;
                     return getStatusDescription(request);
                 });
