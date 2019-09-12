@@ -38,8 +38,6 @@ namespace OHBEditor
         private static IEnumerable<XElement> ExcludesGoods;//Collection, который содержит исключения которые не надо импортировать
 
         static IProgress<string> progress;
-        static IProgress<string> progress2;
-
         public static TreeView treeViewMaster { get; set; }
         public static TreeView treeViewExcludes { get; set; }
         public static TreeNode MasterNode { get; set; }
@@ -51,10 +49,9 @@ namespace OHBEditor
                 return GetTreeNodes(treeViewMaster).ToList();
             }
         }
-        public static void Initialization(IProgress<string> _progress, IProgress<string> _progress2, TreeView treeView1, TreeView treeView2)
+        public static void Initialization(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
             progress = _progress;
-            progress2 = _progress2;
             treeViewMaster = treeView1;
             treeViewExcludes = treeView2;
             progress.Report("Cтартуем...");
@@ -103,9 +100,6 @@ namespace OHBEditor
             string ACCESS_TOKEN = "288e0cb78e83277d2258b5c46e40d7bdb0a3ff74";
             string uri = "https://my.prom.ua/api/v1/";
             string qry_products = "products/list?limit = 10000 & group_id = ";
-            //string qry_groups = "groups/list?limit=1000";
-            //"?limit = 10000 & group_id = 777"
-            //string qrystr = "https://my.prom.ua/api/v1/groups/list?limit=1000";
             using (HttpClient client = new HttpClient())
             {
                 // Call asynchronous network methods in a try/catch block to handle exceptions
@@ -185,8 +179,6 @@ namespace OHBEditor
                         response.EnsureSuccessStatusCode();
                         string responseBody = await response.Content.ReadAsStringAsync();
                         // Above three lines can be replaced with new helper method below
-                        // string responseBody = await client.GetStringAsync(uri);
-                        //Status = request + "-  Ok!";
                         return responseBody;
                     }
                     catch (HttpRequestException e)
@@ -448,8 +440,6 @@ namespace OHBEditor
                     FileInfo fileInfoLocalEcxludes;
                     Files.SaveXml(Files.FolderOHB_Local + Files.FileOHB_Excludes, excludes, out fileInfoLocalEcxludes);
                     progress.Report("Добавлено в исключения - " + excludes.Elements().Count() + " наименований");
-                    progress2.Report(fileInfoLocalEcxludes.FullName);
-
                 }
             });
 
