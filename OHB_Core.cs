@@ -602,6 +602,28 @@ namespace OHBEditor
             //}
 
         }
+
+        public static async Task GetShopStatisticServer(IProgress<string> progress)
+        {
+            progress.Report($"Статистика...");
+            //XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
+            XDocument remoteShop = await Files.LoadXMLAsync(Files.FolderOHB_Remote + Files.FileOHB_Shop);
+            //список категорий
+            IEnumerable<XElement> xCategories = remoteShop.Element(yml_catalog).Element(shop).Element(categories).Elements();
+            //список всех товаров
+            IEnumerable<XElement> allGoods = remoteShop.Element(yml_catalog).Element(shop).Element(offers).Elements();
+            //progress.Report($"Категорий - {xCategories.Count()} \r\nТоваров всего - {allGoods.Count()}");
+
+            XDocument remoteExcludes = await Files.LoadXMLAsync(Files.FolderOHB_Remote + Files.FileOHB_Excludes);
+            //progress.Report($"Исключений - {remoteExcludes.Element("Excludes").Elements().Count()}");
+            int x1 = xCategories.Count();
+            int x2 = allGoods.Count();
+            int x3 = remoteExcludes.Element("Excludes").Elements().Count();
+            progress.Report($"Категорий - {x1} \r\nТоваров всего - {x2}\r\n" +
+                  $"Исключений - {x3}\r\n" +
+                  $"Общее количество - {x1 + x2 + x3}");
+        }
+
     }
     namespace Helpers
     {
@@ -683,13 +705,11 @@ namespace OHBEditor
             }
             public static async Task<bool> CheckVersionsOfFilesAsync(string file, IProgress<string> progress)
             {
+                progress.Report($"Проверяю версию {file}...");
                 XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
                 XDocument rem = await LoadXMLAsync(FolderOHB_Remote + file);
-
-
                 bool result = (loc?.Root.Attribute("date").Value == rem?.Root.Attribute("date").Value);
                 //bool result = loc.Root.GetHashCode().Equals(rem.Root.GetHashCode());
-
                 progress.Report("Локальный " + file + " - " + loc?.Root.Attribute("date").Value + "\r\n" +
                                 "На сервере " + file + " - " + rem?.Root.Attribute("date").Value);
                 return result;
