@@ -1,7 +1,6 @@
 ﻿using Newtonsoft.Json;
 using OHBEditor.FtpClient;
 using OHBEditor.Helpers;
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -10,16 +9,19 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
+using static OHBEditor.Helpers.Files;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
 using System.Xml.Linq;
+using System.ComponentModel;
+using System.Xml.Serialization;
 
 namespace OHBEditor
 {
     public static class OHB_Core
     {
+        #region Constants
         public static readonly XName yml_catalog = "yml_catalog";
         public static readonly XName shop = "shop";
         public static readonly XName offers = "offers";
@@ -33,11 +35,12 @@ namespace OHBEditor
         public static readonly XName date = "date";
         public static readonly XName url = "url";
         public static readonly XName available = "available";
+        #endregion
 
         private static XElement shopTree;
         private static IEnumerable<XElement> ExcludesGoods;//Collection, который содержит исключения которые не надо импортировать
 
-        static IProgress<string> progress;
+        public static IProgress<string> progress;
         public static TreeView treeViewMaster { get; set; }
         public static TreeView treeViewExcludes { get; set; }
         public static TreeNode MasterNode { get; set; }
@@ -49,20 +52,42 @@ namespace OHBEditor
                 return GetTreeNodes(treeViewMaster).ToList();
             }
         }
-        public static void Initialization(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
+
+        public static BindingList<string> listShops;//список выгрузок
+        public static XDocument xdocListShops; //список выгрузок
+
+        public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
             progress = _progress;
             treeViewMaster = treeView1;
             treeViewExcludes = treeView2;
             progress.Report("Cтартуем...");
+
+            //загрузка списка магазинов
+            xdocListShops = await LoadXMLAsync(FolderOHB_Remote + FileOHB_ListShops);
+            //Create an instance of the XmlSerializer.
+            //XmlSerializer serializer = new XmlSerializer(typeof(ShopsYml));
+            //ShopsYml shops = serializer.Deserialize(xdocListShops.Root.CreateReader()) as ShopsYml;
+            ReloadShopsList(xdocListShops);
+            //var lst = (from e in xdocListShops.Element("shops-yml").Elements()
+            //           select e.Value).ToList();
+            //listShops = new BindingList<string>(lst);
+            
+        }
+
+        public static void ReloadShopsList(XDocument xdoc)
+        {
+            var lst = (from e in xdoc.Element("shops-yml").Elements()
+                       select e.Value).ToList();
+            listShops = new BindingList<string>(lst);
         }
         public static async Task Update()
         {
             try
             {
                 await GetShopsAsync();
-                Files.SaveXml(Files.FolderOHB_Local + Files.FileOHB_Shop, shopTree);
-                await UploadFileAsync(Files.FileOHB_Shop);
+                SaveXml(FolderOHB_Local + FileOHB_Shop, shopTree);
+                await UploadFileAsync(FileOHB_Shop);
             }
             catch (Exception ex)
             {
@@ -76,17 +101,17 @@ namespace OHBEditor
                 progress.Report("Uploading " + fileName + " to ftp...");
 
                 // Создаем объект подключения по FTP
-                Client client = new Client("ftp://ftp.s51.freehost.com.ua/", "granitmar1_ohbed", "Va3NeMHzyY");
+                Client client = new Client("ftp://ftp.s51.freehost.com.ua/", "granitmar1", "96OVL4PmL8");
                 
-                string file = Path.Combine(Files.FolderOHB_Local, fileName);
+                string file = Path.Combine(FolderOHB_Local, fileName);
                 string newFileName = Path.GetFileNameWithoutExtension(file)
                                      + DateTime.Now.ToString("dd-MM-yyyy HH:mm") + Path.GetExtension(file);
 
                 if (client.ListDirectory().Where(f => f == fileName).Count() > 0)
                     progress.Report(await client.RenameAsync(fileName, newFileName));
 
-                progress.Report(await client.UploadFileAsync(Path.Combine(Files.FolderOHB_Local, fileName), 
-                                                                "ftp://ftp.s51.freehost.com.ua/" + fileName));
+                progress.Report(await client.UploadFileAsync(Path.Combine(FolderOHB_Local, fileName),
+                                                                "ftp://ftp.s51.freehost.com.ua/www.onebeauty.com.ua/files/" + fileName));
                 progress.Report("Ok!");
                 progress.Report("==================================================");
             }
@@ -197,16 +222,17 @@ namespace OHBEditor
         /// </summary>
         /// <param name="url_shop"></param>
         /// <returns></returns>
-        private static TreeNode GetShopsForXMLAsync(string url_shop)
+        private static TreeNode GetShopsForXML(string url_shop)
         {
             try
             {
                 //***************************************************************
                 //загружаем магазин
                 Uri uri = new Uri(url_shop);
-                progress.Report(uri.Host + " загрузка...");
+                progress.Report(uri.OriginalString + " загрузка...");
                 XDocument xYMLCatalog = XDocument.Load(url_shop);
-                xYMLCatalog.Save(Files.FolderOHB_Local + uri.Host + ".xml");
+                string nameShop = uri.Host + uri.PathAndQuery.Replace("/", "-");
+                xYMLCatalog.Save(nameShop + ".xml");
                 //список категорий
                 IEnumerable<XElement> xCategories = xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements();
                 //список всех товаров
@@ -218,20 +244,21 @@ namespace OHBEditor
                 //добавляем Товары в общее дерево 
                 shopTree.Element(shop).Element(offers).Add(ohbGoods);
 
-                progress.Report("категорий - " + xCategories.Count() + "; товаров в выгрузке - " + allGoods.Count()
-                    + "; товаров с учетом исключений - " + ohbGoods.Count() + "; обновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value);
                 XAttribute xCatalogAttribute = xYMLCatalog.Element(yml_catalog).Attribute(date);
                 DateTime lastUpdate = DateTime.Parse(xCatalogAttribute.Value);//дата последнего обновления
 
                 //************************  строим дерево категорий-подкатегорий  ******************************
                 //Добавляем магазин в TreeView
-                TreeNode rootCatalog = new TreeNode(xYMLCatalog.Element(yml_catalog).Element(shop).Element(url).Value +
-                                        " - " + lastUpdate.ToString() + " (" + xCategories.Count() + ")");
+                //TreeNode rootCatalog = new TreeNode(xYMLCatalog.Element(yml_catalog).Element(shop).Element(url).Value +
+                //                        " - " + lastUpdate.ToString() + " (" + xCategories.Count() + ")");
+                TreeNode rootCatalog = new TreeNode($"{nameShop} - {lastUpdate.ToString()} ({xCategories.Count()})");
                 //Строим дерево
                 RebuildTree(rootCatalog, ohbGoods);
                 rootCatalog.Tag = xYMLCatalog.Element(yml_catalog);
 
                 MasterNode.Nodes.Add(rootCatalog);
+                progress.Report($"{nameShop} готово!: категорий - " + xCategories.Count() + "; товаров в выгрузке - " + allGoods.Count()
+                + "; товаров с учетом исключений - " + ohbGoods.Count() + "; обновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value);
 
                 return rootCatalog;
             }
@@ -245,6 +272,62 @@ namespace OHBEditor
             }
             return null;
 
+        }
+        private static async Task<TreeNode> GetShopsForXMLAsync(string url_shop)
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    //***************************************************************
+                    //загружаем магазин
+                    Uri uri = new Uri(url_shop);
+                    progress.Report(uri.OriginalString + " загрузка...");
+                    XDocument xYMLCatalog = XDocument.Load(url_shop);
+                    string nameShop = uri.Host + uri.PathAndQuery.Replace("/", "-");
+                    xYMLCatalog.Save(nameShop + ".xml");
+                    //список категорий
+                    IEnumerable<XElement> xCategories = xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements();
+                    //список всех товаров
+                    IEnumerable<XElement> allGoods = xYMLCatalog.Element(yml_catalog).Element(shop).Element(offers).Elements();
+                    //список товаров с учетом исключений | Без .ToArray() - очень долго считает
+                    IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
+                    //добавляем Категории в общее дерево
+                    shopTree.Element(shop).Element(categories).Add(xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements());
+                    //добавляем Товары в общее дерево 
+                    shopTree.Element(shop).Element(offers).Add(ohbGoods);
+
+                    XAttribute xCatalogAttribute = xYMLCatalog.Element(yml_catalog).Attribute(date);
+                    DateTime lastUpdate = DateTime.Parse(xCatalogAttribute.Value);//дата последнего обновления
+
+                    //************************  строим дерево категорий-подкатегорий  ******************************
+                    //Добавляем магазин в TreeView
+                    //TreeNode rootCatalog = new TreeNode(xYMLCatalog.Element(yml_catalog).Element(shop).Element(url).Value +
+                    //                        " - " + lastUpdate.ToString() + " (" + xCategories.Count() + ")");
+                    TreeNode rootCatalog = new TreeNode($"{nameShop} - {lastUpdate.ToString()} ({xCategories.Count()})");
+                    //Строим дерево
+                    RebuildTree(rootCatalog, ohbGoods);
+                    rootCatalog.Tag = xYMLCatalog.Element(yml_catalog);
+
+                    MasterNode.Nodes.Add(rootCatalog);
+
+                    progress.Report($"{nameShop} готово!: категорий - " + xCategories.Count() + "; товаров в выгрузке - " + allGoods.Count()
+                    + "; товаров с учетом исключений - " + ohbGoods.Count() + "; обновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value);
+
+                    return rootCatalog;
+                }
+                catch (XmlException xmlEx)
+                {
+                    progress.Report(xmlEx.Message);
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    progress.Report(ex.Message);
+                    return null;
+                }
+            });
+            return null;
         }
 
         /// <summary>
@@ -261,7 +344,7 @@ namespace OHBEditor
             try
             {
                 //загружаем список магазинов
-                XDocument xdoc = XDocument.Load(Files.FolderOHB_Remote + Files.FileOHB_ListShops);
+                //XDocument xdoc = XDocument.Load(Files.FolderOHB_Remote + Files.FileOHB_ListShops);
 
                 string time_update = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
 
@@ -277,17 +360,29 @@ namespace OHBEditor
                 //должно загружаться здесь
                 ExcludesGoods = await LoadShopExcludesAsync();
 
-                int count = xdoc.Element("shops-yml").Elements().Count();
-                Task<TreeNode>[] task = new Task<TreeNode>[count];
 
-                int i = 0;
-                foreach (XElement addresxml in xdoc.Element("shops-yml").Descendants()) //XElement addresxml in xdoc.Element("shops-yml").Descendants()
+                //Делаем список магазинов, которые будут загружаться (у которых атрибут enable = true)
+                IEnumerable<XElement> lst = 
+                    xdocListShops.Element("shops-yml").Descendants().Where(el => el.Attribute("enable").Value == "true");
+                if (lst.Count() == 0)
                 {
-                    task[i] = new Task<TreeNode>(() => GetShopsForXMLAsync(addresxml.Value));
-                    task[i].Start();
+                    progress.Report("Активных магазинов нет. Проверьте вкладку Список магазинов");
+                    return;
+                }
+                Task<TreeNode>[] tasks = new Task<TreeNode>[lst.Count()];
+                int i = 0;
+                foreach (XElement addresxml in lst) // (string addresxml in listShops)
+                {
+                    tasks[i] = new Task<TreeNode>(() => GetShopsForXML(addresxml.Value), TaskCreationOptions.LongRunning);
+                    tasks[i].Start();
                     i++;
                 }
-                await Task.WhenAll(task); // ожидаем завершения задач 
+                await Task.WhenAll(tasks); // ожидаем завершения задач 
+
+                //foreach (XElement addresxml in xdoc.Element("shops-yml").Descendants())
+                //{
+                //    TreeNode tn = await GetShopsForXMLAsync(addresxml.Value);
+                //}
 
                 #region Заполняем TreeView с магазинами
                 MasterNode.Tag = shopTree;
@@ -304,9 +399,9 @@ namespace OHBEditor
                 treeViewExcludes.Nodes[0].Expand();//раскрываем корневой
                 #endregion
 
-                shopTree.Save(Files.FolderOHB_Local + Files.FileOHB_Shop);//сохраняем локальный файл
+                shopTree.Save(FolderOHB_Local + FileOHB_Shop);//сохраняем локальный файл
 
-                Report(time_update);
+                СommonReport(time_update);
             }
             catch (Exception e)
             {
@@ -315,11 +410,11 @@ namespace OHBEditor
 
         }
 
-        private static void Report(string time_update)
+        public static void СommonReport(string time_update)
         {
             progress.Report("Всего категорий - " + shopTree.Element(shop).Element(categories).Elements().Count()
                            + "; товаров - " + shopTree.Element(shop).Element(offers).Elements().Count());
-            FileInfo f = new FileInfo(Files.FolderOHB_Local + Files.FileOHB_Shop);
+            FileInfo f = new FileInfo(FolderOHB_Local + FileOHB_Shop);
             progress.Report("Локальный файл - " + f.FullName + "\r\n" + Math.Round((double)f.Length / 1000000, 2) + " Mb");
             progress.Report("Время локального обновления - " + time_update);
         }
@@ -608,6 +703,11 @@ namespace OHBEditor
             progress.Report($"Статистика...");
             //XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
             XDocument remoteShop = await Files.LoadXMLAsync(Files.FolderOHB_Remote + Files.FileOHB_Shop);
+            if (remoteShop==null)
+            {
+                progress.Report($"{Files.FolderOHB_Remote + Files.FileOHB_Shop} не найден");
+                return;
+            }
             //список категорий
             IEnumerable<XElement> xCategories = remoteShop.Element(yml_catalog).Element(shop).Element(categories).Elements();
             //список всех товаров
@@ -625,6 +725,36 @@ namespace OHBEditor
         }
 
     }
+
+    // Примечание. Для запуска созданного кода может потребоваться NET Framework версии 4.5 или более поздней версии и .NET Core или Standard версии 2.0 или более поздней.
+    /// <remarks/>
+    [Serializable()]
+    //[DesignerCategory("code")]
+    [XmlType(AnonymousType = true)]
+    [XmlRoot("shops-yml", Namespace = "", IsNullable = false)]
+    public class ShopsYml
+    {
+        /// <remarks/>
+        [XmlElement("yml")]
+        public Yml[] YmlShop { get; set; }
+    }
+
+    /// <remarks/>
+    [Serializable()]
+    //[DesignerCategory("code")]
+    [XmlType(AnonymousType = true)]
+    public class Yml
+    {
+        /// <remarks/>
+        [XmlAttribute()]
+        [XmlText()]
+        public string Enable { get; set; }
+
+        /// <remarks/>
+        [XmlText()]
+        public string Value { get; set; }
+    }
+
     namespace Helpers
     {
         public static class Files
@@ -699,20 +829,33 @@ namespace OHBEditor
                     {
                         return null;
                     }
+                    catch (Exception e)
+                    {
+                        OHB_Core.progress?.Report(e.Message);
+                        return null;
+                    }
 
                 });
 
             }
             public static async Task<bool> CheckVersionsOfFilesAsync(string file, IProgress<string> progress)
             {
-                progress.Report($"Проверяю версию {file}...");
-                XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
-                XDocument rem = await LoadXMLAsync(FolderOHB_Remote + file);
-                bool result = (loc?.Root.Attribute("date").Value == rem?.Root.Attribute("date").Value);
-                //bool result = loc.Root.GetHashCode().Equals(rem.Root.GetHashCode());
-                progress.Report("Локальный " + file + " - " + loc?.Root.Attribute("date").Value + "\r\n" +
-                                "На сервере " + file + " - " + rem?.Root.Attribute("date").Value);
-                return result;
+                try
+                {
+                    progress.Report($"Проверяю версию {file}...");
+                    XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
+                    XDocument rem = await LoadXMLAsync(FolderOHB_Remote + file);
+                    bool result = (loc?.Root.Attribute("date").Value == rem?.Root.Attribute("date").Value);
+                    //bool result = loc.Root.GetHashCode().Equals(rem.Root.GetHashCode());
+                    progress.Report("Локальный " + file + " - " + loc?.Root.Attribute("date").Value + "\r\n" +
+                                    "На сервере " + file + " - " + rem?.Root.Attribute("date").Value);
+                    return result;
+                }
+                catch(Exception e)
+                {
+                    progress.Report(e.Message);
+                    return false;
+                }
             }
 
         }
@@ -968,5 +1111,5 @@ namespace OHBEditor
         }
 
     }
-
+    
 }
