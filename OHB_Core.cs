@@ -40,6 +40,7 @@ namespace OHBEditor
 
         private static XElement shopTree;
         private static IEnumerable<XElement> ExcludesGoods;//Collection, который содержит исключения которые не надо импортировать
+        //private static XElement xExcludesGoods; //xElement, который содержит Categories и исключения
 
         public static IProgress<string> progress;
         public static TreeView treeViewMaster { get; set; }
@@ -67,6 +68,8 @@ namespace OHBEditor
 
             //загрузка списка магазинов
             await LoadShopsList();
+            //загрузка Excludes
+             ExcludesGoods = await LoadShopExcludesAsync();
             
         }
 
@@ -250,7 +253,7 @@ namespace OHBEditor
                 //                        " - " + lastUpdate.ToString() + " (" + xCategories.Count() + ")");
                 TreeNode rootCatalog = new TreeNode($"{nameShop} - {lastUpdate.ToString()} ({xCategories.Count()})");
                 //Строим дерево
-                RebuildTree(rootCatalog, ohbGoods);
+                RebuildTree(rootCatalog, xCategories, ohbGoods);
                 rootCatalog.Tag = xYMLCatalog.Element(yml_catalog);
 
                 MasterNode.Nodes.Add(rootCatalog);
@@ -303,7 +306,7 @@ namespace OHBEditor
                     //                        " - " + lastUpdate.ToString() + " (" + xCategories.Count() + ")");
                     TreeNode rootCatalog = new TreeNode($"{nameShop} - {lastUpdate.ToString()} ({xCategories.Count()})");
                     //Строим дерево
-                    RebuildTree(rootCatalog, ohbGoods);
+                    RebuildTree(rootCatalog, xCategories, ohbGoods);
                     rootCatalog.Tag = xYMLCatalog.Element(yml_catalog);
 
                     MasterNode.Nodes.Add(rootCatalog);
@@ -353,11 +356,6 @@ namespace OHBEditor
 
                 MasterNode = new TreeNode("One Home Beauty - " + time_update);
 
-                //загружаем список исключений - товары, которые исключаются из общего файла
-                //должно загружаться здесь
-                ExcludesGoods = await LoadShopExcludesAsync();
-
-
                 //Делаем список магазинов, которые будут загружаться (у которых атрибут enable = true)
                 IEnumerable<XElement> lst = 
                     xdocListShops.Element("shops-yml").Descendants().Where(el => el.Attribute("enable").Value == "true");
@@ -374,24 +372,29 @@ namespace OHBEditor
                     tasks[i].Start();
                     i++;
                 }
-                await Task.WhenAll(tasks); // ожидаем завершения задач 
+                await Task.WhenAll(tasks); // ожидаем завершения задач после чего будет доступна поная секция Categories
 
                 //foreach (XElement addresxml in xdoc.Element("shops-yml").Descendants())
                 //{
                 //    TreeNode tn = await GetShopsForXMLAsync(addresxml.Value);
                 //}
-
                 #region Заполняем TreeView с магазинами
                 MasterNode.Tag = shopTree;
                 treeViewMaster.Nodes.Add(MasterNode);
                 treeViewMaster.Nodes[0].Expand();//раскрываем корневой
                 #endregion
-
                 #region Заполняем TreeView исключений
                 TreeNode tnExcludes = new TreeNode("Исключения");
-                ExcludesNode = RebuildTree(tnExcludes, ExcludesGoods);
-                //ExcludesNode = LoadExcludesInTreeView();
+                progress.Report("Заполняем дерево Исключений...");
+                Task task = new Task<TreeNode>(() =>
+                    ExcludesNode = RebuildTree(tnExcludes,
+                                shopTree.Element(shop).Element(categories).Elements(),
+                                ExcludesGoods),
+                                TaskCreationOptions.LongRunning);
+                task.Start();
+                await Task.WhenAll(task);
                 ExcludesNode.Tag = new XElement("Excludes");
+                progress.Report("исключения - готово!");
                 treeViewExcludes.Nodes.Add(ExcludesNode);
                 treeViewExcludes.Nodes[0].Expand();//раскрываем корневой
                 #endregion
@@ -442,19 +445,21 @@ namespace OHBEditor
             }
 
         }
-        private static async Task<IEnumerable<XElement>> LoadShopExcludesAsync()
+        private static async Task <IEnumerable<XElement>> LoadShopExcludesAsync()
         {
             try
             {
                 //***************************************************************
                 //загружаем магазин
-                XDocument xDoc;
+                XDocument xDocExcludes;
                 using (var httpclient = new HttpClient())
                 {
-                    var response = await httpclient.GetAsync(Path.Combine(Files.FolderOHB_Remote, Files.FileOHB_Excludes));  
-                    xDoc = XDocument.Load(await response.Content.ReadAsStreamAsync());
-                }
-                return xDoc.Element("Excludes").Elements();
+                    var response1 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Excludes));
+                    var response2 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Shop));
+                    xDocExcludes = XDocument.Load(await response1.Content.ReadAsStreamAsync());
+                 }
+
+                return xDocExcludes.Element("Excludes").Elements();
             }
             catch (XmlException xmlEx)
             {
@@ -560,20 +565,20 @@ namespace OHBEditor
                         GetExcludesGoods(excludes, tn);
                     }
                     FileInfo fileInfoLocalEcxludes;
-                    Files.SaveXml(Files.FolderOHB_Local + Files.FileOHB_Excludes, excludes, out fileInfoLocalEcxludes);
+                    SaveXml(FolderOHB_Local + FileOHB_Excludes, excludes, out fileInfoLocalEcxludes);
                     progress.Report("Добавлено в исключения - " + excludes.Elements().Count() + " наименований");
                 }
             });
 
         }
 
-        public static TreeNode RebuildTree(TreeNode tnRoot, IEnumerable<XElement> xGoods)
+        public static TreeNode RebuildTree(TreeNode tnRoot, IEnumerable<XElement> xCategories, IEnumerable<XElement> xGoods)
         {
             try
             {
-                IEnumerable<XElement> _categories = shopTree.Element(shop).Element(categories).Elements();
+                //IEnumerable<XElement> _categories = shopTree.Element(shop).Element(categories).Elements();
                 //берем корневые категории - которые не имеют parentId или parentId == 0
-                foreach (XElement rootCategory in _categories.Where(e => e.Attributes(parentId).Count() == 0
+                foreach (XElement rootCategory in xCategories.Where(e => e.Attributes(parentId).Count() == 0
                                                                       || e.Attribute(parentId).Value == "0"))
                 {
                     //tnRoot.NodeFont = new Font("Trebuchet MS", 12);
@@ -582,7 +587,7 @@ namespace OHBEditor
                     TreeNode tn = tnRoot.Nodes.Add(rootCategory.Attribute(id).Value, rootCategory.Value);
                     tn.Tag = rootCategory;
                     //заполняем корневые категории подкатегориями
-                    FindSubcategories(rootCategory, tnRoot.Nodes[rootCategory.Attribute(id).Value], _categories);
+                    FindSubcategories(rootCategory, tnRoot.Nodes[rootCategory.Attribute(id).Value], xCategories);
                 }
                 //заполняем все категории товарами
                 AddGoods(tnRoot, xGoods);
@@ -593,11 +598,13 @@ namespace OHBEditor
                 RemoveEmptyCategory(tnRoot);
                 return tnRoot;
             }
+
             catch (Exception e)
             {
                 progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
                 return null;
             }
+
         }
         public static TreeNode RebuildTree(TreeNode tnRoot)
         {
@@ -734,10 +741,10 @@ namespace OHBEditor
         {
             progress.Report($"Статистика...");
             //XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
-            XDocument remoteShop = await Files.LoadXMLAsync(Files.FolderOHB_Remote + Files.FileOHB_Shop);
+            XDocument remoteShop = await LoadXMLAsync(FolderOHB_Remote + FileOHB_Shop);
             if (remoteShop==null)
             {
-                progress.Report($"{Files.FolderOHB_Remote + Files.FileOHB_Shop} не найден");
+                progress.Report($"{FolderOHB_Remote + FileOHB_Shop} не найден");
                 return;
             }
             //список категорий
@@ -746,11 +753,11 @@ namespace OHBEditor
             IEnumerable<XElement> allGoods = remoteShop.Element(yml_catalog).Element(shop).Element(offers).Elements();
             //progress.Report($"Категорий - {xCategories.Count()} \r\nТоваров всего - {allGoods.Count()}");
 
-            XDocument remoteExcludes = await Files.LoadXMLAsync(Files.FolderOHB_Remote + Files.FileOHB_Excludes);
+            //XDocument remoteExcludes = await LoadXMLAsync(FolderOHB_Remote + FileOHB_Excludes);
             //progress.Report($"Исключений - {remoteExcludes.Element("Excludes").Elements().Count()}");
             int x1 = xCategories.Count();
             int x2 = allGoods.Count();
-            int x3 = remoteExcludes.Element("Excludes").Elements().Count();
+            int x3 = ExcludesGoods.Count(); //remoteExcludes.Element("Excludes").Elements().Count();
             progress.Report($"Категорий - {x1} \r\nТоваров всего - {x2}\r\n" +
                   $"Исключений - {x3}\r\n" +
                   $"Общее количество - {x1 + x2 + x3}");
