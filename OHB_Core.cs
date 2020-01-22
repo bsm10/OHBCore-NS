@@ -16,6 +16,7 @@ using System.Xml;
 using System.Xml.Linq;
 using System.ComponentModel;
 using System.Xml.Serialization;
+using System.Diagnostics;
 
 namespace OHBEditor
 {
@@ -58,29 +59,25 @@ namespace OHBEditor
 
         public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
+            Debug.AutoFlush = true;
             progress = _progress;
             treeViewMaster = treeView1;
             treeViewExcludes = treeView2;
             progress.Report("Cтартуем...");
 
             //загрузка списка магазинов
-            xdocListShops = await LoadXMLAsync(FolderOHB_Remote + FileOHB_ListShops);
-            //Create an instance of the XmlSerializer.
-            //XmlSerializer serializer = new XmlSerializer(typeof(ShopsYml));
-            //ShopsYml shops = serializer.Deserialize(xdocListShops.Root.CreateReader()) as ShopsYml;
-            ReloadShopsList(xdocListShops);
-            //var lst = (from e in xdocListShops.Element("shops-yml").Elements()
-            //           select e.Value).ToList();
-            //listShops = new BindingList<string>(lst);
+            await LoadShopsList();
             
         }
 
-        public static void ReloadShopsList(XDocument xdoc)
+        public static async Task LoadShopsList()
         {
-            var lst = (from e in xdoc.Element("shops-yml").Elements()
+            xdocListShops = await LoadXMLAsync(FolderOHB_Remote + FileOHB_ListShops);
+            var lst = (from e in xdocListShops.Element("shops-yml").Elements()
                        select e.Value).ToList();
             listShops = new BindingList<string>(lst);
         }
+
         public static async Task Update()
         {
             try
@@ -503,6 +500,8 @@ namespace OHBEditor
                 }
             }
         }
+
+        //Выбирает тег <offer> из xml
         private static bool GetOffers(IEnumerable<XElement> xOffers, TreeNode tnCategory)
         {
             XElement gd = (XElement)tnCategory.Tag;
@@ -521,6 +520,34 @@ namespace OHBEditor
 
             return true;
         }
+        private static void GetOffersUncategorized(TreeNode tnRoot, IEnumerable<XElement> xOffers)
+        {
+            IEnumerable<XElement> xCategories = shopTree.Element(shop).Element(categories).Elements();
+
+            Debug.WriteLine($"xOffers.Count {xOffers.Count()}, xCategories.Count {xCategories.Count()}");
+
+            //получаем товары, прязанные к существующим категориям
+            IEnumerable<XElement> goods = from XElement offer in xOffers
+                                          from XElement category in xCategories
+                                          where offer.Element(categoryId).Value == category.Attribute("id").Value
+                                          select offer;
+
+            //получаем товары, не прязанные к существующим категориям или у которых категория, которой нет в списке
+            IEnumerable<XElement> exceptGoods = xOffers.Except(goods);
+            Debug.WriteLine($"exceptGoods.Count {exceptGoods.Count()}");
+
+            if (exceptGoods.Count() == 0) return;
+
+            foreach (XElement g in exceptGoods)
+            {
+                TreeNode trnOffer = new TreeNode(g.Element("name").Value);
+                trnOffer.Tag = g;
+                tnRoot.Nodes.Add(trnOffer);
+            }
+
+            return;
+        }
+
         public static async Task SaveExcludes(TreeNodeCollection treeNodeCollection)
         {
             await Task.Run(() =>
@@ -539,7 +566,8 @@ namespace OHBEditor
             });
 
         }
-        public static TreeNode RebuildTree(TreeNode tnRoot, IEnumerable<XElement> goods)
+
+        public static TreeNode RebuildTree(TreeNode tnRoot, IEnumerable<XElement> xGoods)
         {
             try
             {
@@ -557,7 +585,11 @@ namespace OHBEditor
                     FindSubcategories(rootCategory, tnRoot.Nodes[rootCategory.Attribute(id).Value], _categories);
                 }
                 //заполняем все категории товарами
-                AddGoods(tnRoot, goods);
+                AddGoods(tnRoot, xGoods);
+
+                //TODO: добавляем товары не привязанные к категории (или с несуществующей категорией)
+                GetOffersUncategorized(tnRoot, xGoods);
+
                 RemoveEmptyCategory(tnRoot);
                 return tnRoot;
             }
