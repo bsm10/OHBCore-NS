@@ -58,27 +58,23 @@ namespace OHBEditor
         public static BindingList<string> listShops;//список выгрузок
         public static XDocument xdocListShops; //список выгрузок
 
+        public static XDocument xdocRemOHBShop; //магазин на сервере
+        public static XDocument xdocRemExcludes; //список исключений на сервере
+        public static XDocument xdocLocOHBShop; //магазин local
+        public static XDocument xdocLocExcludes; //список исключений на сервере local
+
+
+
         public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
             Debug.AutoFlush = true;
             progress = _progress;
             treeViewMaster = treeView1;
             treeViewExcludes = treeView2;
-            progress.Report("Cтартуем...");
 
-            //загрузка списка магазинов
-            await LoadShopsList();
-            //загрузка Excludes
-             ExcludesGoods = await LoadShopExcludesAsync();
-            
-        }
+            //загрузка xml
+            await LoadXMLAsync();
 
-        public static async Task LoadShopsList()
-        {
-            xdocListShops = await LoadXMLAsync(FolderOHB_Remote + FileOHB_ListShops);
-            var lst = (from e in xdocListShops.Element("shops-yml").Elements()
-                       select e.Value).ToList();
-            listShops = new BindingList<string>(lst);
         }
 
         public static async Task Update()
@@ -238,7 +234,17 @@ namespace OHBEditor
                 //список всех товаров
                 IEnumerable<XElement> allGoods = xYMLCatalog.Element(yml_catalog).Element(shop).Element(offers).Elements();
                 //список товаров с учетом исключений | Без .ToArray() - очень долго считает
-                IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
+
+                System.Diagnostics.Stopwatch sw = new Stopwatch();
+                sw.Start();
+                //IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
+                IEnumerable<XElement> ohbGoods = allGoods.AsParallel().Except(ExcludesGoods.AsParallel(), new OfferComparer()).ToArray();
+                sw.Stop();
+                Debug.WriteLine((sw.ElapsedMilliseconds / 100.0).ToString(), "time except");
+
+                
+                        
+
                 //добавляем Категории в общее дерево
                 shopTree.Element(shop).Element(categories).Add(xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements());
                 //добавляем Товары в общее дерево 
@@ -291,7 +297,7 @@ namespace OHBEditor
                     //список всех товаров
                     IEnumerable<XElement> allGoods = xYMLCatalog.Element(yml_catalog).Element(shop).Element(offers).Elements();
                     //список товаров с учетом исключений | Без .ToArray() - очень долго считает
-                    IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
+                    IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new OfferComparer()).ToArray();
                     //добавляем Категории в общее дерево
                     shopTree.Element(shop).Element(categories).Add(xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements());
                     //добавляем Товары в общее дерево 
@@ -374,6 +380,8 @@ namespace OHBEditor
                 }
                 await Task.WhenAll(tasks); // ожидаем завершения задач после чего будет доступна поная секция Categories
 
+
+
                 //foreach (XElement addresxml in xdoc.Element("shops-yml").Descendants())
                 //{
                 //    TreeNode tn = await GetShopsForXMLAsync(addresxml.Value);
@@ -385,7 +393,7 @@ namespace OHBEditor
                 #endregion
                 #region Заполняем TreeView исключений
                 TreeNode tnExcludes = new TreeNode("Исключения");
-                progress.Report("Заполняем дерево Исключений...");
+                progress.Report("Заполняем дерево исключений...");
                 Task task = new Task<TreeNode>(() =>
                     ExcludesNode = RebuildTree(tnExcludes,
                                 shopTree.Element(shop).Element(categories).Elements(),
@@ -394,7 +402,7 @@ namespace OHBEditor
                 task.Start();
                 await Task.WhenAll(task);
                 ExcludesNode.Tag = new XElement("Excludes");
-                progress.Report("исключения - готово!");
+                progress.Report("Дерево исключений - построено!");
                 treeViewExcludes.Nodes.Add(ExcludesNode);
                 treeViewExcludes.Nodes[0].Expand();//раскрываем корневой
                 #endregion
@@ -410,6 +418,26 @@ namespace OHBEditor
 
         }
 
+        /// <summary>
+        /// Извлечение всех узлов TreeView без рекурсии
+        /// </summary>
+        /// <param name="treeView"></param>
+        /// <returns></returns>
+        public static IEnumerable<TreeNode> AllTreeNodes(TreeView treeView)
+        {
+            Queue<TreeNode> nodes = new Queue<TreeNode>();
+            foreach (TreeNode item in treeView.Nodes)
+                nodes.Enqueue(item);
+
+            while (nodes.Count > 0)
+            {
+                TreeNode node = nodes.Dequeue();
+                yield return node;
+                foreach (TreeNode item in node.Nodes)
+                    nodes.Enqueue(item);
+            }
+        }
+
         public static void СommonReport(string time_update)
         {
             progress.Report("Всего категорий - " + shopTree.Element(shop).Element(categories).Elements().Count()
@@ -417,13 +445,17 @@ namespace OHBEditor
             FileInfo f = new FileInfo(FolderOHB_Local + FileOHB_Shop);
             progress.Report("Локальный файл - " + f.FullName + "\r\n" + Math.Round((double)f.Length / 1000000, 2) + " Mb");
             progress.Report("Время локального обновления - " + time_update);
+            
         }
-        class GoodsComparer : IEqualityComparer<XElement>
+        class OfferComparer : IEqualityComparer<XElement>
         {
             // Products are equal if their names and product categories are equal.
             public bool Equals(XElement x, XElement y)
             {
-                return x.Attribute("id").Value == y.Attribute("id").Value && x.Element("categoryId").Value == y.Element("categoryId").Value;
+                //return x.Attribute("id").Value == y.Attribute("id").Value &&
+                //    x.Element("categoryId").Value == y.Element("categoryId").Value;
+                return x.Attribute("id").Value == y.Attribute("id").Value;
+
             }
 
             // If Equals() returns true for a pair of objects 
@@ -445,32 +477,149 @@ namespace OHBEditor
             }
 
         }
-        private static async Task <IEnumerable<XElement>> LoadShopExcludesAsync()
+        //private static async Task <IEnumerable<XElement>> LoadShopExcludesAsync()
+        //{
+        //    try
+        //    {
+        //        //***************************************************************
+        //        //загружаем магазин
+        //        XDocument xDocExcludes;
+        //        using (var httpclient = new HttpClient())
+        //        {
+        //            var response1 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Excludes));
+        //            //var response2 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Shop));
+        //            xDocExcludes = XDocument.Load(await response1.Content.ReadAsStreamAsync());
+        //        }
+        //        //RemoveDublicatsFromExcludes(xDocExcludes);
+        //        return xDocExcludes.Element("Excludes").Elements();
+        //    }
+        //    catch (XmlException xmlEx)
+        //    {
+        //        progress.Report(xmlEx.Message);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        progress.Report(ex.Message);
+        //    }
+        //    return null;
+        //}
+
+        /// <summary>
+        /// Загружаем магазин и исключения с сервера и локально 
+        /// </summary>
+        private static async Task LoadXMLAsync()
         {
             try
             {
-                //***************************************************************
-                //загружаем магазин
-                XDocument xDocExcludes;
-                using (var httpclient = new HttpClient())
-                {
-                    var response1 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Excludes));
-                    var response2 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Shop));
-                    xDocExcludes = XDocument.Load(await response1.Content.ReadAsStreamAsync());
-                 }
+                progress.Report($"Загружаю xml...");
+                Task[] tasks = new Task[5];
 
-                return xDocExcludes.Element("Excludes").Elements();
-            }
-            catch (XmlException xmlEx)
-            {
-                progress.Report(xmlEx.Message);
+                tasks[0] = new Task<XDocument>(() => {
+                    try
+                    {
+                        xdocRemOHBShop = XDocument.Load(FolderOHB_Remote + FileOHB_Shop);
+                        return xdocRemOHBShop;
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }, TaskCreationOptions.LongRunning);
+
+                tasks[1] = new Task<XDocument>(() => {
+                    try
+                    {
+                        xdocRemExcludes = XDocument.Load(FolderOHB_Remote + FileOHB_Excludes);
+                        ExcludesGoods = xdocRemExcludes.Element("Excludes").Elements();
+                        return xdocRemExcludes;
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }, TaskCreationOptions.LongRunning);
+
+                tasks[2] = new Task<XDocument>(() => {
+                    try
+                    {
+                        xdocLocOHBShop = XDocument.Load(FolderOHB_Local + FileOHB_Shop);
+                        return xdocLocOHBShop;
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }, TaskCreationOptions.LongRunning);
+
+                tasks[3] = new Task<XDocument>(() => {
+                    try
+                    {
+                        xdocLocExcludes = XDocument.Load(FolderOHB_Local + FileOHB_Excludes);
+                        return xdocLocExcludes;
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }, TaskCreationOptions.LongRunning);
+                tasks[4] = new Task<XDocument>(() => {
+                    try
+                    {
+                        xdocListShops = XDocument.Load(FolderOHB_Remote + FileOHB_ListShops);
+                        var lst = (from e in xdocListShops.Element("shops-yml").Elements()
+                                   select e.Value).ToList();
+                        listShops = new BindingList<string>(lst);
+                        return xdocListShops;
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }, TaskCreationOptions.LongRunning);
+                
+                for (int i = 0; i < tasks.Length; i++)
+                {
+                    tasks[i].Start();
+                }
+
+                await Task.WhenAll(tasks); // ожидаем завершения задач
+                                           
+                progress.Report($"Ok!");
             }
             catch (Exception ex)
             {
                 progress.Report(ex.Message);
             }
-            return null;
         }
+
+        /// <summary>
+        /// Удаляет дублирующиеся товары из исключений
+        /// </summary>
+        /// <param name="xDocExcludes"></param>
+        public static async Task RemoveDublicatsFromExcludesAsync()
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    IEnumerable<XElement> q = xdocLocExcludes.Element("Excludes").Elements().Distinct(new OfferComparer());
+                    if (q.Count() > 0)
+                    {
+
+                        XElement excl = (new XElement("Excludes",
+                                            new XAttribute("date", xdocLocExcludes.Element("Excludes").Attribute("date").Value)));
+                        excl.Add(q);
+                        excl.Save(FolderOHB_Local + "excludes.xml");
+                        progress.Report("Дубликаты удалены в локальном файле, не забудте отправить исключения на сервер: Меню Исключения->Отправить исключения на сервер");
+                    }
+                }
+                catch (Exception e)
+                {
+                    progress?.Report(e.Message);
+                }
+            });
+        }
+
         private static void FindSubcategories(XElement categoryElement, TreeNode tnode, IEnumerable<XElement> categories)
         {
             tnode.ForeColor = Color.DarkSlateBlue;
@@ -505,8 +654,14 @@ namespace OHBEditor
                 }
             }
         }
+ 
 
-        //Выбирает тег <offer> из xml
+        /// <summary>
+        /// Выбирает товары, привязанные к текущей категории
+        /// </summary>
+        /// <param name="xOffers">Список товаров</param>
+        /// <param name="tnCategory">Текущая категория</param>
+        /// <returns></returns>
         private static bool GetOffers(IEnumerable<XElement> xOffers, TreeNode tnCategory)
         {
             XElement gd = (XElement)tnCategory.Tag;
@@ -525,6 +680,12 @@ namespace OHBEditor
 
             return true;
         }
+
+        /// <summary>
+        /// получает товары, не прязанные к существующим категориям, и добавляет их в корень магазина
+        /// </summary>
+        /// <param name="tnRoot"></param>
+        /// <param name="xOffers"></param>
         private static void GetOffersUncategorized(TreeNode tnRoot, IEnumerable<XElement> xOffers)
         {
             IEnumerable<XElement> xCategories = shopTree.Element(shop).Element(categories).Elements();
@@ -553,6 +714,11 @@ namespace OHBEditor
             return;
         }
 
+        /// <summary>
+        /// Сохраняет файл исключений локально
+        /// </summary>
+        /// <param name="treeNodeCollection"></param>
+        /// <returns></returns>
         public static async Task SaveExcludes(TreeNodeCollection treeNodeCollection)
         {
             await Task.Run(() =>
@@ -572,11 +738,18 @@ namespace OHBEditor
 
         }
 
+        /// <summary>
+        /// Строит дерево и возвращает корневой узел с потомками
+        /// </summary>
+        /// <param name="tnRoot">Корневой узел без потомков</param>
+        /// <param name="xCategories">Категории</param>
+        /// <param name="xGoods">Товары</param>
+        /// <returns></returns>
         public static TreeNode RebuildTree(TreeNode tnRoot, IEnumerable<XElement> xCategories, IEnumerable<XElement> xGoods)
         {
             try
             {
-                //IEnumerable<XElement> _categories = shopTree.Element(shop).Element(categories).Elements();
+
                 //берем корневые категории - которые не имеют parentId или parentId == 0
                 foreach (XElement rootCategory in xCategories.Where(e => e.Attributes(parentId).Count() == 0
                                                                       || e.Attribute(parentId).Value == "0"))
@@ -606,38 +779,11 @@ namespace OHBEditor
             }
 
         }
-        public static TreeNode RebuildTree(TreeNode tnRoot)
-        {
-            try
-            {
-                IEnumerable<XElement> _categories = GetXElementsFromTreeNode(tnRoot, "category");
-
-                IEnumerable<XElement> _goods = GetXElementsFromTreeNode(tnRoot, "item")
-                                                    .Concat(GetXElementsFromTreeNode(tnRoot, "offer"));
-
-                //берем корневые категории - которые не имеют parentId или parentId == 0
-                foreach (XElement rootCategory in _categories.Where(e => e.Attributes(parentId).Count() == 0
-                                                                      || e.Attribute(parentId).Value == "0"))
-                {
-                    //tnRoot.NodeFont = new Font("Trebuchet MS", 12);
-                    tnRoot.ForeColor = Color.DarkMagenta;
-
-                    TreeNode tn = tnRoot.Nodes.Add(rootCategory.Attribute(id).Value, rootCategory.Value);
-                    tn.Tag = rootCategory;
-                    //заполняем корневые категории подкатегориями
-                    FindSubcategories(rootCategory, tnRoot.Nodes[rootCategory.Attribute(id).Value], _categories);
-                }
-                //заполняем все категории товарами
-                AddGoods(tnRoot, _goods);
-                RemoveEmptyCategory(tnRoot);
-                return tnRoot;
-            }
-            catch (Exception e)
-            {
-                progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
-                return null;
-            }
-        }
+        
+        /// <summary>
+        /// Удаляет категории, которые не имеют товаров
+        /// </summary>
+        /// <param name="node"></param>
         private static void RemoveEmptyCategory(TreeNode node)
         {
             IEnumerable<TreeNode> res = new[] { node }.Concat(node.Nodes
@@ -737,11 +883,16 @@ namespace OHBEditor
 
         }
 
-        public static async Task GetShopStatisticServer(IProgress<string> progress)
+        public static async Task GetShopStatisticServer(IProgress<string> progress, bool bGetFromServer = false)
         {
             progress.Report($"Статистика...");
+            XDocument remoteShop;
             //XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
-            XDocument remoteShop = await LoadXMLAsync(FolderOHB_Remote + FileOHB_Shop);
+            if (bGetFromServer)
+                remoteShop = await Files.LoadXMLAsync(FolderOHB_Remote + FileOHB_Shop);
+            else
+                remoteShop = xdocRemOHBShop;
+
             if (remoteShop==null)
             {
                 progress.Report($"{FolderOHB_Remote + FileOHB_Shop} не найден");
@@ -765,6 +916,7 @@ namespace OHBEditor
 
     }
 
+    
     // Примечание. Для запуска созданного кода может потребоваться NET Framework версии 4.5 или более поздней версии и .NET Core или Standard версии 2.0 или более поздней.
     /// <remarks/>
     [Serializable()]
@@ -802,6 +954,7 @@ namespace OHBEditor
             public static string FolderOHB_Remote { get; } = @"http://onebeauty.com.ua/files/";
             public static string FileOHB_Logfile { get; set; }
             public static string FileOHB_Shop { get; } = "onehomebeauty.xml";
+            public static string FileOHB_ShopNew { get; } = "onehomebeauty_new.xml";
             public static string FileOHB_Excludes { get; } = "excludes.xml";
             public static string FileOHB_ListShops { get; } = "shops-yml.xml";
             public static async Task SaveXMLShops(string fileName, string ymlCatalog, IProgress<string> progress)
@@ -873,30 +1026,32 @@ namespace OHBEditor
                         OHB_Core.progress?.Report(e.Message);
                         return null;
                     }
-
                 });
 
             }
-            public static async Task<bool> CheckVersionsOfFilesAsync(string file, IProgress<string> progress)
+            public static async Task<bool> CheckVersionsOfFilesAsync(XDocument loc, XDocument rem)
             {
-                try
+                return await Task.Run(async () =>
                 {
-                    progress.Report($"Проверяю версию {file}...");
-                    XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
-                    XDocument rem = await LoadXMLAsync(FolderOHB_Remote + file);
-                    bool result = (loc?.Root.Attribute("date").Value == rem?.Root.Attribute("date").Value);
-                    //bool result = loc.Root.GetHashCode().Equals(rem.Root.GetHashCode());
-                    progress.Report("Локальный " + file + " - " + loc?.Root.Attribute("date").Value + "\r\n" +
-                                    "На сервере " + file + " - " + rem?.Root.Attribute("date").Value);
-                    return result;
-                }
-                catch(Exception e)
-                {
-                    progress.Report(e.Message);
-                    return false;
-                }
+                    try
+                    {
+                        //XDocument loc1 = await LoadXMLAsync(FolderOHB_Local + file);
+                        //XDocument rem1 = await LoadXMLAsync(FolderOHB_Remote + file);
+                        //bool result = (loc?.Root.Attribute("date").Value == rem?.Root.Attribute("date").Value);
+                        //bool result = loc.Root.GetHashCode().Equals(rem.Root.GetHashCode());
+                        //progress.Report("Локальный " + file + " - " + loc?.Root.Attribute("date").Value + "\r\n" +
+                        //                "На сервере " + file + " - " + rem?.Root.Attribute("date").Value);
+                        bool result = (loc?.Root.Attribute("date").Value == rem?.Root.Attribute("date").Value);
+                        //progress.Report("Локальный " + file + " - " + loc?.Root.Attribute("date").Value + "\r\n" +
+                        //                "На сервере " + file + " - " + rem?.Root.Attribute("date").Value);
+                        return result;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                });
             }
-
         }
     }
 
