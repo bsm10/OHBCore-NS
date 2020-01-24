@@ -63,10 +63,19 @@ namespace OHBEditor
         public static XDocument xdocLocOHBShop; //магазин local
         public static XDocument xdocLocExcludes; //список исключений на сервере local
 
+        private static Task taskExcludesNode; //выполняет добавление дерева после построения в TreeView 
 
-
+        //private static BackgroundWorker backgroundWorker1;
         public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
+            BackgroundWorker backgroundWorker1 = new BackgroundWorker();
+            //backgroundWorker1.DoWork += backgroundWorker1_DoWork;
+            //backgroundWorker1.RunWorkerCompleted += backgroundWorker1_RunWorkerCompleted;
+            backgroundWorker1.DoWork += new DoWorkEventHandler(backgroundWorker1_DoWork);
+            backgroundWorker1.RunWorkerCompleted += new RunWorkerCompletedEventHandler(backgroundWorker1_RunWorkerCompleted);
+            //backgroundWorker1.ProgressChanged += backgroundWorker1_ProgressChanged;
+            //backgroundWorker1.WorkerReportsProgress = true;
+
             Debug.AutoFlush = true;
             progress = _progress;
             treeViewMaster = treeView1;
@@ -74,8 +83,50 @@ namespace OHBEditor
 
             //загрузка xml
             await LoadXMLAsync();
+            
+            backgroundWorker1.RunWorkerAsync();
+
+            progress.Report("Загружаем магазины...");
+            await GetShopsAsync();
+
+            //Parallel.Invoke(
+            //    async () => {
+            //        progress.Report("Загружаем магазины...");
+            //        await GetShopsAsync();
+            //    },
+            //    () => {
+            //        backgroundWorker1.RunWorkerAsync();
+            //    });
 
         }
+
+        private static void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            treeViewExcludes.Nodes.Add(ExcludesNode);
+            treeViewExcludes.Nodes[0].Expand();//раскрываем корневой
+        }
+
+        private static void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
+        {
+            AddExcludesInTreeView();
+        }
+
+        private static void AddExcludesInTreeView()
+        {
+            #region Заполняем TreeView исключений
+            TreeNode tnExcludes = new TreeNode("Исключения");
+            progress.Report("Заполняем дерево исключений...");
+            IEnumerable<XElement> e = xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements();
+            ExcludesNode = RebuildTree(tnExcludes, e, ExcludesGoods);
+            //if (e.Count() > 0 && ExcludesGoods.Count() > 0)
+            //{
+                
+            //}
+            ExcludesNode.Tag = new XElement("Excludes");
+            progress.Report("Дерево исключений - построено!");
+            #endregion
+        }
+
 
         public static async Task Update()
         {
@@ -242,9 +293,6 @@ namespace OHBEditor
                 sw.Stop();
                 Debug.WriteLine((sw.ElapsedMilliseconds / 100.0).ToString(), "time except");
 
-                
-                        
-
                 //добавляем Категории в общее дерево
                 shopTree.Element(shop).Element(categories).Add(xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements());
                 //добавляем Товары в общее дерево 
@@ -270,11 +318,11 @@ namespace OHBEditor
             }
             catch (XmlException xmlEx)
             {
-                progress.Report(xmlEx.Message);
+                progress.Report($"GetShopsForXML: {xmlEx.Message}");
             }
             catch (Exception ex)
             {
-                progress.Report(ex.Message);
+                progress.Report($"GetShopsForXML: {ex.Message}");
             }
             return null;
 
@@ -391,21 +439,7 @@ namespace OHBEditor
                 treeViewMaster.Nodes.Add(MasterNode);
                 treeViewMaster.Nodes[0].Expand();//раскрываем корневой
                 #endregion
-                #region Заполняем TreeView исключений
-                TreeNode tnExcludes = new TreeNode("Исключения");
-                progress.Report("Заполняем дерево исключений...");
-                Task task = new Task<TreeNode>(() =>
-                    ExcludesNode = RebuildTree(tnExcludes,
-                                shopTree.Element(shop).Element(categories).Elements(),
-                                ExcludesGoods),
-                                TaskCreationOptions.LongRunning);
-                task.Start();
-                await Task.WhenAll(task);
-                ExcludesNode.Tag = new XElement("Excludes");
-                progress.Report("Дерево исключений - построено!");
-                treeViewExcludes.Nodes.Add(ExcludesNode);
-                treeViewExcludes.Nodes[0].Expand();//раскрываем корневой
-                #endregion
+
 
                 shopTree.Save(FolderOHB_Local + FileOHB_Shop);//сохраняем локальный файл
 
@@ -437,6 +471,22 @@ namespace OHBEditor
                     nodes.Enqueue(item);
             }
         }
+
+        public static IEnumerable<TreeNode> AllTreeNodes(TreeNodeCollection tnc)
+        {
+            Queue<TreeNode> nodes = new Queue<TreeNode>();
+            foreach (TreeNode item in tnc)
+                nodes.Enqueue(item);
+
+            while (nodes.Count > 0)
+            {
+                TreeNode node = nodes.Dequeue();
+                yield return node;
+                foreach (TreeNode item in node.Nodes)
+                    nodes.Enqueue(item);
+            }
+        }
+
 
         public static void СommonReport(string time_update)
         {
@@ -628,7 +678,6 @@ namespace OHBEditor
                                                   where subcat.Attributes(parentId).Count() > 0 &&
                                                         subcat.Attribute(parentId).Value == categoryElement.Attribute(id).Value
                                                   select subcat;
-
             foreach (XElement x in subcategories)
             {
                 string idcategory = x.Attribute(id).Value;
@@ -654,7 +703,39 @@ namespace OHBEditor
                 }
             }
         }
- 
+        private static void AddGoods2(TreeNode treeNode, IEnumerable<XElement> xOffers)
+        {
+            XElement el = (XElement)treeNode.Tag;
+            //if (treeNode.Nodes.Count == 0)
+            if (treeNode.Nodes.Count == 0)
+            {
+                GetOffers(xOffers, treeNode);
+            }
+            else
+            {
+                //System.Diagnostics.Stopwatch sw = new Stopwatch();
+                //sw.Start();
+                //IEnumerable<TreeNode> en = GetTreeNodes(treeNode.Nodes);
+                //sw.Stop();
+                //Debug.WriteLine((sw.Elapsed).ToString(), "GetTreeNodes");
+                //System.Diagnostics.Stopwatch sw2 = new Stopwatch();
+                //sw2.Start();
+                //IEnumerable<TreeNode> en2 = AllTreeNodes(treeNode.Nodes);
+                //sw2.Stop();
+                //Debug.WriteLine((sw2.Elapsed).ToString(), "AllTreeNodes");
+
+
+
+                //Parallel.ForEach(AllTreeNodes(treeNode.Nodes), (tn) =>
+                foreach (TreeNode tn in treeNode.Nodes)
+                {
+                    GetOffers(xOffers, tn);//в категории с субкатегорией, могут тоже быть товары
+                    AddGoods(tn, xOffers);
+                }
+                //);
+            }
+        }
+
 
         /// <summary>
         /// Выбирает товары, привязанные к текущей категории
@@ -832,6 +913,15 @@ namespace OHBEditor
              .ToArray();
             return treeNodes;
         }
+        public static TreeNode[] GetTreeNodes(TreeNodeCollection tnc)
+        {
+            TreeNode[] treeNodes = tnc
+             .OfType<TreeNode>()
+             .SelectMany(x => GetNodeAndChildren(x))
+             .ToArray();
+            return treeNodes;
+        }
+
         private static IEnumerable<TreeNode> GetNodeAndChildren(TreeNode node)
         {
             return new[] { node }.Concat(node.Nodes
