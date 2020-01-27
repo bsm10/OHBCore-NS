@@ -68,6 +68,8 @@ namespace OHBEditor
         //private static BackgroundWorker backgroundWorker1;
         public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
             BackgroundWorker backgroundWorker1 = new BackgroundWorker();
             //backgroundWorker1.DoWork += backgroundWorker1_DoWork;
             //backgroundWorker1.RunWorkerCompleted += backgroundWorker1_RunWorkerCompleted;
@@ -88,16 +90,8 @@ namespace OHBEditor
 
             progress.Report("Загружаем магазины...");
             await GetShopsAsync();
-
-            //Parallel.Invoke(
-            //    async () => {
-            //        progress.Report("Загружаем магазины...");
-            //        await GetShopsAsync();
-            //    },
-            //    () => {
-            //        backgroundWorker1.RunWorkerAsync();
-            //    });
-
+            sw.Stop();
+            Debug.WriteLine($"General time loading - {sw.Elapsed}");
         }
 
         private static void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
@@ -153,7 +147,7 @@ namespace OHBEditor
                 string file = Path.Combine(FolderOHB_Local, fileName);
                 string newFileName = Path.GetFileNameWithoutExtension(file)
                                      + DateTime.Now.ToString("dd-MM-yyyy HH:mm") + Path.GetExtension(file);
-
+                client.ChangeWorkingDirectory("www.onebeauty.com.ua/files/");
                 if (client.ListDirectory().Where(f => f == fileName).Count() > 0)
                     progress.Report(await client.RenameAsync(fileName, newFileName));
 
@@ -289,9 +283,10 @@ namespace OHBEditor
                 System.Diagnostics.Stopwatch sw = new Stopwatch();
                 sw.Start();
                 //IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
-                IEnumerable<XElement> ohbGoods = allGoods.AsParallel().Except(ExcludesGoods.AsParallel(), new OfferComparer()).ToArray();
+                IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new OfferComparer()).ToArray();
                 sw.Stop();
-                Debug.WriteLine((sw.ElapsedMilliseconds / 100.0).ToString(), "time except");
+                Debug.WriteLine($"{nameShop} except - {sw.Elapsed}");
+                //Debug.WriteLine((sw.Elapsed).ToString(), "time except");
 
                 //добавляем Категории в общее дерево
                 shopTree.Element(shop).Element(categories).Add(xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements());
@@ -527,33 +522,6 @@ namespace OHBEditor
             }
 
         }
-        //private static async Task <IEnumerable<XElement>> LoadShopExcludesAsync()
-        //{
-        //    try
-        //    {
-        //        //***************************************************************
-        //        //загружаем магазин
-        //        XDocument xDocExcludes;
-        //        using (var httpclient = new HttpClient())
-        //        {
-        //            var response1 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Excludes));
-        //            //var response2 = await httpclient.GetAsync(Path.Combine(FolderOHB_Remote, FileOHB_Shop));
-        //            xDocExcludes = XDocument.Load(await response1.Content.ReadAsStreamAsync());
-        //        }
-        //        //RemoveDublicatsFromExcludes(xDocExcludes);
-        //        return xDocExcludes.Element("Excludes").Elements();
-        //    }
-        //    catch (XmlException xmlEx)
-        //    {
-        //        progress.Report(xmlEx.Message);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        progress.Report(ex.Message);
-        //    }
-        //    return null;
-        //}
-
         /// <summary>
         /// Загружаем магазин и исключения с сервера и локально 
         /// </summary>
@@ -975,7 +943,7 @@ namespace OHBEditor
 
         public static async Task GetShopStatisticServer(IProgress<string> progress, bool bGetFromServer = false)
         {
-            progress.Report($"Статистика...");
+            progress.Report($"Статистика OneHomeBeauty.xml на сервере:");
             XDocument remoteShop;
             //XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
             if (bGetFromServer)
@@ -999,9 +967,9 @@ namespace OHBEditor
             int x1 = xCategories.Count();
             int x2 = allGoods.Count();
             int x3 = ExcludesGoods.Count(); //remoteExcludes.Element("Excludes").Elements().Count();
-            progress.Report($"Категорий - {x1} \r\nТоваров всего - {x2}\r\n" +
-                  $"Исключений - {x3}\r\n" +
-                  $"Общее количество - {x1 + x2 + x3}");
+            progress.Report($"Категорий - {x1} \r\n" +
+                            $"Товаров - {x2}\r\n" +
+                  $"Исключений - {x3}\r\n");
         }
 
     }
