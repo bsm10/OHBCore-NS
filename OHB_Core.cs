@@ -39,7 +39,7 @@ namespace OHBEditor
         #endregion
 
         private static XElement shopTree;
-        private static IEnumerable<XElement> ExcludesGoods;//Collection, который содержит исключения которые не надо импортировать
+        private static IEnumerable<XElement> ExcludesGoods { get; set; }//Collection, который содержит исключения которые не надо импортировать
         //private static XElement xExcludesGoods; //xElement, который содержит Categories и исключения
 
         public static IProgress<string> progress;
@@ -56,42 +56,35 @@ namespace OHBEditor
         }
 
         public static BindingList<string> listShops;//список выгрузок
-        public static XDocument xdocListShops; //список выгрузок
+        
+        public static XDocument xdocListShops { get; set; } //список url выгрузок
+        public static List<XDocument> ListShops { get; set; } //список выгрузок
+        public static XDocument xdocRemOHBShop { get; set; } //магазин на сервере
+        public static XDocument xdocRemExcludes { get; set; } //список исключений на сервере
+        public static XDocument xdocLocOHBShop { get; set; } //магазин local
+        public static XDocument xdocLocExcludes { get; set; } //список исключений на сервере local
 
-        public static XDocument xdocRemOHBShop; //магазин на сервере
-        public static XDocument xdocRemExcludes; //список исключений на сервере
-        public static XDocument xdocLocOHBShop; //магазин local
-        public static XDocument xdocLocExcludes; //список исключений на сервере local
-
-        private static Task taskExcludesNode; //выполняет добавление дерева после построения в TreeView 
-
-        //private static BackgroundWorker backgroundWorker1;
         public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
             BackgroundWorker backgroundWorker1 = new BackgroundWorker();
-            //backgroundWorker1.DoWork += backgroundWorker1_DoWork;
-            //backgroundWorker1.RunWorkerCompleted += backgroundWorker1_RunWorkerCompleted;
             backgroundWorker1.DoWork += new DoWorkEventHandler(backgroundWorker1_DoWork);
             backgroundWorker1.RunWorkerCompleted += new RunWorkerCompletedEventHandler(backgroundWorker1_RunWorkerCompleted);
-            //backgroundWorker1.ProgressChanged += backgroundWorker1_ProgressChanged;
-            //backgroundWorker1.WorkerReportsProgress = true;
-
             Debug.AutoFlush = true;
             progress = _progress;
             treeViewMaster = treeView1;
             treeViewExcludes = treeView2;
 
-            //загрузка xml
+            //Главная загрузка всех xml
             await LoadXMLAsync();
             
             backgroundWorker1.RunWorkerAsync();
 
-            progress.Report("Загружаем магазины...");
             await GetShopsAsync();
             sw.Stop();
-            Debug.WriteLine($"General time loading - {sw.Elapsed}");
+            progress.Report($"General time loading - {sw.Elapsed}");
+            GetShopStatisticServer(progress);
         }
 
         private static void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
@@ -107,18 +100,25 @@ namespace OHBEditor
 
         private static void AddExcludesInTreeView()
         {
-            #region Заполняем TreeView исключений
-            TreeNode tnExcludes = new TreeNode("Исключения");
-            progress.Report("Заполняем дерево исключений...");
-            IEnumerable<XElement> e = xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements();
-            ExcludesNode = RebuildTree(tnExcludes, e, ExcludesGoods);
-            //if (e.Count() > 0 && ExcludesGoods.Count() > 0)
-            //{
-                
-            //}
-            ExcludesNode.Tag = new XElement("Excludes");
-            progress.Report("Дерево исключений - построено!");
-            #endregion
+            try
+            {
+                #region Заполняем TreeView исключений
+                TreeNode tnExcludes = new TreeNode("Исключения");
+                progress.Report("Заполняем дерево исключений...");
+                IEnumerable<XElement> e = xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements().ToArray();
+                ExcludesNode = RebuildTree(tnExcludes, e, ExcludesGoods);
+                if (ExcludesNode == null)
+                {
+                    ExcludesNode = new TreeNode("Исключения");
+                }
+                ExcludesNode.Tag = new XElement("Excludes");
+                progress.Report("Дерево исключений - построено!");
+                #endregion
+            }
+            catch(Exception e)
+            {
+                progress.Report($"AddExcludesInTreeView() - {e.Message}");
+            }
         }
 
 
@@ -145,16 +145,17 @@ namespace OHBEditor
                 Client client = new Client("ftp://ftp.s51.freehost.com.ua/", "granitmar1", "96OVL4PmL8");
                 
                 string file = Path.Combine(FolderOHB_Local, fileName);
+                //string newFileName = Path.GetFileNameWithoutExtension(file)
+                //                     + DateTime.Now.ToString("dd-MM-yyyy HH:mm") + Path.GetExtension(file);
                 string newFileName = Path.GetFileNameWithoutExtension(file)
-                                     + DateTime.Now.ToString("dd-MM-yyyy HH:mm") + Path.GetExtension(file);
+                                     + "2" + Path.GetExtension(file);
                 client.ChangeWorkingDirectory("www.onebeauty.com.ua/files/");
                 if (client.ListDirectory().Where(f => f == fileName).Count() > 0)
                     progress.Report(await client.RenameAsync(fileName, newFileName));
 
                 progress.Report(await client.UploadFileAsync(Path.Combine(FolderOHB_Local, fileName),
                                                                 "ftp://ftp.s51.freehost.com.ua/www.onebeauty.com.ua/files/" + fileName));
-                progress.Report("Ok!");
-                progress.Report("==================================================");
+                progress.Report("•————————————————• Ok! •—————————————————•");
             }
             catch (Exception ex)
             {
@@ -263,15 +264,16 @@ namespace OHBEditor
         /// </summary>
         /// <param name="url_shop"></param>
         /// <returns></returns>
-        private static TreeNode GetShopsForXML(string url_shop)
+        private static void GetShopsForXML(XDocument xYMLCatalog)
         {
             try
             {
                 //***************************************************************
                 //загружаем магазин
-                Uri uri = new Uri(url_shop);
-                progress.Report(uri.OriginalString + " загрузка...");
-                XDocument xYMLCatalog = XDocument.Load(url_shop);
+                Uri uri = new Uri(xYMLCatalog.Element(yml_catalog).Element(shop).Element(url)?.Value);
+                progress.Report(uri.OriginalString + " building tree...");
+                //XDocument xYMLCatalog = XDocument.Load(url_shop);
+
                 string nameShop = uri.Host + uri.PathAndQuery.Replace("/", "-");
                 xYMLCatalog.Save(nameShop + ".xml");
                 //список категорий
@@ -283,7 +285,7 @@ namespace OHBEditor
                 System.Diagnostics.Stopwatch sw = new Stopwatch();
                 sw.Start();
                 //IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
-                IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new OfferComparer()).ToArray();
+                IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods.AsParallel(), new OfferComparer()).ToArray();
                 sw.Stop();
                 Debug.WriteLine($"{nameShop} except - {sw.Elapsed}");
                 //Debug.WriteLine((sw.Elapsed).ToString(), "time except");
@@ -306,10 +308,13 @@ namespace OHBEditor
                 rootCatalog.Tag = xYMLCatalog.Element(yml_catalog);
 
                 MasterNode.Nodes.Add(rootCatalog);
-                progress.Report($"{nameShop} готово!: категорий - " + xCategories.Count() + "; товаров в выгрузке - " + allGoods.Count()
-                + "; товаров с учетом исключений - " + ohbGoods.Count() + "; обновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value);
+                progress.Report($"{nameShop} Ok!: категорий - " + xCategories.Count() + 
+                                ";\r\n  товаров в выгрузке - " + allGoods.Count() +
+                                ";\r\n  товаров с учетом исключений - " + ohbGoods.Count() +
+                                ";\r\nобновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value +
+                                "\r\n————————————————————————————————————————————————————————");
 
-                return rootCatalog;
+               
             }
             catch (XmlException xmlEx)
             {
@@ -319,7 +324,7 @@ namespace OHBEditor
             {
                 progress.Report($"GetShopsForXML: {ex.Message}");
             }
-            return null;
+           
 
         }
         private static async Task<TreeNode> GetShopsForXMLAsync(string url_shop)
@@ -405,25 +410,15 @@ namespace OHBEditor
 
                 MasterNode = new TreeNode("One Home Beauty - " + time_update);
 
-                //Делаем список магазинов, которые будут загружаться (у которых атрибут enable = true)
-                IEnumerable<XElement> lst = 
-                    xdocListShops.Element("shops-yml").Descendants().Where(el => el.Attribute("enable").Value == "true");
-                if (lst.Count() == 0)
-                {
-                    progress.Report("Активных магазинов нет. Проверьте вкладку Список магазинов");
-                    return;
-                }
-                Task<TreeNode>[] tasks = new Task<TreeNode>[lst.Count()];
+                Task[] tasks = new Task[ListShops.Count()];
                 int i = 0;
-                foreach (XElement addresxml in lst) // (string addresxml in listShops)
+                foreach (XDocument shop in ListShops) // (string addresxml in listShops)
                 {
-                    tasks[i] = new Task<TreeNode>(() => GetShopsForXML(addresxml.Value), TaskCreationOptions.LongRunning);
+                    tasks[i] = new Task(() => GetShopsForXML(shop), TaskCreationOptions.LongRunning);
                     tasks[i].Start();
                     i++;
                 }
                 await Task.WhenAll(tasks); // ожидаем завершения задач после чего будет доступна поная секция Categories
-
-
 
                 //foreach (XElement addresxml in xdoc.Element("shops-yml").Descendants())
                 //{
@@ -485,8 +480,8 @@ namespace OHBEditor
 
         public static void СommonReport(string time_update)
         {
-            progress.Report("Всего категорий - " + shopTree.Element(shop).Element(categories).Elements().Count()
-                           + "; товаров - " + shopTree.Element(shop).Element(offers).Elements().Count());
+            //progress.Report("Всего категорий - " + shopTree.Element(shop).Element(categories).Elements().Count()
+            //               + "; товаров - " + shopTree.Element(shop).Element(offers).Elements().Count());
             FileInfo f = new FileInfo(FolderOHB_Local + FileOHB_Shop);
             progress.Report("Локальный файл - " + f.FullName + "\r\n" + Math.Round((double)f.Length / 1000000, 2) + " Mb");
             progress.Report("Время локального обновления - " + time_update);
@@ -531,7 +526,7 @@ namespace OHBEditor
             {
                 progress.Report($"Загружаю xml...");
                 Task[] tasks = new Task[5];
-
+                //файл магазина на сервере
                 tasks[0] = new Task<XDocument>(() => {
                     try
                     {
@@ -544,11 +539,12 @@ namespace OHBEditor
                     }
                 }, TaskCreationOptions.LongRunning);
 
+                //файл исключений на сервере
                 tasks[1] = new Task<XDocument>(() => {
                     try
                     {
                         xdocRemExcludes = XDocument.Load(FolderOHB_Remote + FileOHB_Excludes);
-                        ExcludesGoods = xdocRemExcludes.Element("Excludes").Elements();
+                        ExcludesGoods = xdocRemExcludes.Element("Excludes").Elements().ToArray();
                         return xdocRemExcludes;
                     }
                     catch
@@ -557,6 +553,7 @@ namespace OHBEditor
                     }
                 }, TaskCreationOptions.LongRunning);
 
+                //файл магазина локальный
                 tasks[2] = new Task<XDocument>(() => {
                     try
                     {
@@ -569,6 +566,7 @@ namespace OHBEditor
                     }
                 }, TaskCreationOptions.LongRunning);
 
+                //файл исключений локальный
                 tasks[3] = new Task<XDocument>(() => {
                     try
                     {
@@ -580,13 +578,36 @@ namespace OHBEditor
                         return null;
                     }
                 }, TaskCreationOptions.LongRunning);
-                tasks[4] = new Task<XDocument>(() => {
+
+                //список выгрузок на сервере и загрузка магазинов
+                tasks[4] = new Task<XDocument>(() =>
+                {
                     try
                     {
                         xdocListShops = XDocument.Load(FolderOHB_Remote + FileOHB_ListShops);
-                        var lst = (from e in xdocListShops.Element("shops-yml").Elements()
-                                   select e.Value).ToList();
+                        List<string> lst = (from e in xdocListShops.Element("shops-yml").Elements()
+                                            select e.Value).ToList();
                         listShops = new BindingList<string>(lst);
+
+                        ListShops = new List<XDocument>(lst.Count);
+
+                        //Делаем список магазинов, которые будут загружаться (у которых атрибут enable = true)
+                        IEnumerable<XElement> lstEnabled =
+                            xdocListShops.Element("shops-yml").Descendants().Where(el => el.Attribute("enable").Value == "true");
+                        if (lstEnabled.Count() == 0)
+                        {
+                            progress.Report("Активных магазинов нет. Проверьте вкладку Список магазинов");
+                        }
+                        Task[] subtasks = new Task[lstEnabled.Count()];
+                        int i = 0;
+                        foreach (XElement xUrl in lstEnabled) // (string addresxml in listShops)
+                        {
+                            subtasks[i] = new Task(() => ListShops.Add(XDocument.Load(xUrl.Value)), TaskCreationOptions.LongRunning);
+                            subtasks[i].Start();
+                            i++;
+                        }
+                        Task.WaitAll(subtasks);
+                        progress.Report($"Загружено {i} выгрузок");
                         return xdocListShops;
                     }
                     catch
@@ -620,10 +641,10 @@ namespace OHBEditor
             {
                 try
                 {
+                    progress.Report("Удаляю дубликаты в локальном файле исключений");
                     IEnumerable<XElement> q = xdocLocExcludes.Element("Excludes").Elements().Distinct(new OfferComparer());
                     if (q.Count() > 0)
                     {
-
                         XElement excl = (new XElement("Excludes",
                                             new XAttribute("date", xdocLocExcludes.Element("Excludes").Attribute("date").Value)));
                         excl.Add(q);
@@ -668,6 +689,7 @@ namespace OHBEditor
                 {
                     GetOffers(xOffers, tn);//в категории с субкатегорией, могут тоже быть товары
                     AddGoods(tn, xOffers);
+
                 }
             }
         }
@@ -737,15 +759,25 @@ namespace OHBEditor
         /// <param name="xOffers"></param>
         private static void GetOffersUncategorized(TreeNode tnRoot, IEnumerable<XElement> xOffers)
         {
-            IEnumerable<XElement> xCategories = shopTree.Element(shop).Element(categories).Elements();
+            IEnumerable<XElement> xCategories = shopTree.Element(shop).Element(categories).Elements().ToArray();
+            //
+            if(xCategories.Count() == 0)
+            {
+                List<XElement> listCat = new List<XElement>();
+                foreach(XDocument xdoc in ListShops)
+                {
+                    listCat.AddRange(xdoc.Element(yml_catalog).Element(shop).Element(categories).Elements());
+                }
+                xCategories = listCat.ToArray();
+            }
 
             Debug.WriteLine($"xOffers.Count {xOffers.Count()}, xCategories.Count {xCategories.Count()}");
 
             //получаем товары, прязанные к существующим категориям
-            IEnumerable<XElement> goods = from XElement offer in xOffers
+            IEnumerable<XElement> goods = (from XElement offer in xOffers
                                           from XElement category in xCategories
                                           where offer.Element(categoryId).Value == category.Attribute("id").Value
-                                          select offer;
+                                          select offer).ToArray();
 
             //получаем товары, не прязанные к существующим категориям или у которых категория, которой нет в списке
             IEnumerable<XElement> exceptGoods = xOffers.Except(goods);
@@ -846,20 +878,55 @@ namespace OHBEditor
         }
         private static void GetExcludesGoods(XElement excludes, TreeNode treeNode)
         {
-            XElement excludeItem = (XElement)treeNode.Tag;
-            if (excludeItem.Name == "item" || excludeItem.Name == "offer")
+            //XElement excludeItem = (XElement)treeNode.Tag;
+            TreeNode[] treeNodes = treeNode.Nodes
+            .OfType<TreeNode>()
+            .SelectMany(x => GetNodeAndChildren(x))
+            .Where(r => ((XElement)r.Tag).Name == "item" || ((XElement)r.Tag).Name == "offer")
+            .ToArray();
+
+            foreach (TreeNode tn in treeNodes)
             {
-                excludes.Add(excludeItem);
-            }
-            else
-            {
-                foreach (TreeNode tn in treeNode.Nodes)
-                {
-                    GetExcludesGoods(excludes, tn);
-                }
+                excludes.Add((XElement)treeNode.Tag);
             }
 
+
+            //if (excludeItem.Name == "item" || excludeItem.Name == "offer")
+            //{
+            //    excludes.Add(excludeItem);
+            //}
+            //else
+            //{
+            //    foreach (TreeNode tn in treeNode.Nodes)
+            //    {
+            //        GetExcludesGoods(excludes, tn);
+            //    }
+            //}
+
         }
+
+        //получить все товары в TreeView
+        public static TreeNode[] GetTreeNodeOffers(TreeView treeView)
+        {
+            TreeNode[] treeNodes = treeView.Nodes
+             .OfType<TreeNode>()
+             .SelectMany(x => GetNodeAndChildren(x))
+             //.Where(r => ((XElement)r.Tag).Name != "category")
+             .Where(r => ((XElement)r.Tag).Name == "item" || ((XElement)r.Tag).Name == "offer")
+             .ToArray();
+            return treeNodes;
+        }
+
+        public static TreeNode[] GetCheckedTreeNode(TreeView treeView)
+        {
+            TreeNode[] treeNodes = treeView.Nodes
+             .OfType<TreeNode>()
+             .SelectMany(x => GetNodeAndChildren(x))
+             .Where(r => r.Checked)
+             .ToArray();
+            return treeNodes;
+        }
+
         public static TreeNode[] GetTreeNode(string seachString, TreeView treeView)
         {
             if (seachString == "")
@@ -893,25 +960,27 @@ namespace OHBEditor
         private static IEnumerable<TreeNode> GetNodeAndChildren(TreeNode node)
         {
             return new[] { node }.Concat(node.Nodes
-                                            .OfType<TreeNode>()
-                                            .SelectMany(x => GetNodeAndChildren(x)));
+                                 .OfType<TreeNode>()
+                                 .SelectMany(x => GetNodeAndChildren(x)));
         }
-        public static void GetCountOfItemsInTreeView(TreeNodeCollection tnc, ref int i)
-        {
-            foreach (TreeNode node in tnc)
-            {
-                XElement el = (XElement)node.Tag;
-                if (el.Name != "category")
-                {
-                    i++;
-                }
-                else
-                {
-                    GetCountOfItemsInTreeView(node.Nodes, ref i);
-                }
+        //public static void GetCountOfItemsInTreeView(TreeNodeCollection tnc, ref int i)
+        //{
+        //    foreach (TreeNode node in tnc)
+        //    {
+        //        XElement el = (XElement)node.Tag;
+        //        if (el.Name != "category")
+        //        {
+        //            i++;
+        //        }
+        //        else
+        //        {
+        //            GetCountOfItemsInTreeView(node.Nodes, ref i);
+        //        }
 
-            }
-        }
+        //    }
+        //}
+
+
         public static int GetCountOfItemsInTreeView(TreeNode node)
         {
             IEnumerable<TreeNode> res = new[] { node }.Concat(node.Nodes
@@ -921,6 +990,7 @@ namespace OHBEditor
 
             return res.Count();
         }
+
         public static IEnumerable<XElement> GetXElementsFromTreeNode(TreeNode node, string name)
         {
             IEnumerable<TreeNode> res = new[] { node }.Concat(node.Nodes
@@ -941,35 +1011,16 @@ namespace OHBEditor
 
         }
 
-        public static async Task GetShopStatisticServer(IProgress<string> progress, bool bGetFromServer = false)
+        public static void GetShopStatisticServer(IProgress<string> progress)
         {
-            progress.Report($"Статистика OneHomeBeauty.xml на сервере:");
-            XDocument remoteShop;
-            //XDocument loc = await LoadXMLAsync(FolderOHB_Local + file);
-            if (bGetFromServer)
-                remoteShop = await Files.LoadXMLAsync(FolderOHB_Remote + FileOHB_Shop);
-            else
-                remoteShop = xdocRemOHBShop;
-
-            if (remoteShop==null)
-            {
-                progress.Report($"{FolderOHB_Remote + FileOHB_Shop} не найден");
-                return;
-            }
-            //список категорий
-            IEnumerable<XElement> xCategories = remoteShop.Element(yml_catalog).Element(shop).Element(categories).Elements();
-            //список всех товаров
-            IEnumerable<XElement> allGoods = remoteShop.Element(yml_catalog).Element(shop).Element(offers).Elements();
-            //progress.Report($"Категорий - {xCategories.Count()} \r\nТоваров всего - {allGoods.Count()}");
-
-            //XDocument remoteExcludes = await LoadXMLAsync(FolderOHB_Remote + FileOHB_Excludes);
-            //progress.Report($"Исключений - {remoteExcludes.Element("Excludes").Elements().Count()}");
-            int x1 = xCategories.Count();
-            int x2 = allGoods.Count();
-            int x3 = ExcludesGoods.Count(); //remoteExcludes.Element("Excludes").Elements().Count();
-            progress.Report($"Категорий - {x1} \r\n" +
-                            $"Товаров - {x2}\r\n" +
-                  $"Исключений - {x3}\r\n");
+            //await LoadXMLAsync();
+            progress.Report($"Сервер: Категорий - {xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements().Count()}\r\n" +
+                            $"Сервер: Товаров - {xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements().Count()}\r\n" +
+                            $"Сервер: Исключений - {xdocRemExcludes.Element("Excludes").Elements().Count()}\r\n" +
+                            $"Локально: Категорий - {xdocLocOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements().Count()}\r\n" +
+                            $"Локально: Товаров - {xdocLocOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements().Count()}\r\n" +
+                            $"Локально: Исключений - {xdocLocExcludes.Element("Excludes").Elements().Count()}\r\n"
+                            );
         }
 
     }
@@ -1089,7 +1140,7 @@ namespace OHBEditor
             }
             public static async Task<bool> CheckVersionsOfFilesAsync(XDocument loc, XDocument rem)
             {
-                return await Task.Run(async () =>
+                return await Task.Run(() =>
                 {
                     try
                     {
