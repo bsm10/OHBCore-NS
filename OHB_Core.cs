@@ -78,13 +78,13 @@ namespace OHBEditor
 
             //Главная загрузка всех xml
             await LoadXMLAsync();
-            
+            //запуск задачи построения дерева исключений
             backgroundWorker1.RunWorkerAsync();
-
+            //построить дерево товаров
             await GetShopsAsync();
             sw.Stop();
             progress.Report($"General time loading - {sw.Elapsed}");
-            GetShopStatisticServer(progress);
+            _ = GetShopStatisticServerAsync(progress);
         }
 
         private static void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
@@ -98,7 +98,7 @@ namespace OHBEditor
             AddExcludesInTreeView();
         }
 
-        private static void AddExcludesInTreeView()
+        public static void AddExcludesInTreeView(bool buildTree = false)
         {
             try
             {
@@ -106,7 +106,7 @@ namespace OHBEditor
                 TreeNode tnExcludes = new TreeNode("Исключения");
                 progress.Report("Заполняем дерево исключений...");
                 IEnumerable<XElement> e = xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements().ToArray();
-                ExcludesNode = RebuildTree(tnExcludes, e, ExcludesGoods);
+                if(buildTree) ExcludesNode = RebuildTree(tnExcludes, e, ExcludesGoods);
                 if (ExcludesNode == null)
                 {
                     ExcludesNode = new TreeNode("Исключения");
@@ -122,19 +122,21 @@ namespace OHBEditor
         }
 
 
-        public static async Task Update()
-        {
-            try
-            {
-                await GetShopsAsync();
-                SaveXml(FolderOHB_Local + FileOHB_Shop, shopTree);
-                await UploadFileAsync(FileOHB_Shop);
-            }
-            catch (Exception ex)
-            {
-                progress.Report(ex.ToString());
-            }
-        }
+        //public static async Task Update()
+        //{
+        //    try
+        //    {
+        //        await GetShopsAsync();
+        //        SaveXml(FolderOHB_Local + FileOHB_Shop, shopTree);
+        //        await UploadFileAsync(FileOHB_Shop);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        progress.Report(ex.ToString());
+        //    }
+        //}
+
+
         public static async Task UploadFileAsync(string fileName)
         {
             try
@@ -285,7 +287,7 @@ namespace OHBEditor
                 System.Diagnostics.Stopwatch sw = new Stopwatch();
                 sw.Start();
                 //IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
-                IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods.AsParallel(), new OfferComparer()).ToArray();
+                IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new OfferComparer()).ToArray();
                 sw.Stop();
                 Debug.WriteLine($"{nameShop} except - {sw.Elapsed}");
                 //Debug.WriteLine((sw.Elapsed).ToString(), "time except");
@@ -430,7 +432,6 @@ namespace OHBEditor
                 treeViewMaster.Nodes[0].Expand();//раскрываем корневой
                 #endregion
 
-
                 shopTree.Save(FolderOHB_Local + FileOHB_Shop);//сохраняем локальный файл
 
                 СommonReport(time_update);
@@ -520,7 +521,7 @@ namespace OHBEditor
         /// <summary>
         /// Загружаем магазин и исключения с сервера и локально 
         /// </summary>
-        private static async Task LoadXMLAsync()
+        private static async Task LoadXMLAsync(bool bDownloadShops = true)
         {
             try
             {
@@ -544,13 +545,19 @@ namespace OHBEditor
                     try
                     {
                         xdocRemExcludes = XDocument.Load(FolderOHB_Remote + FileOHB_Excludes);
-                        ExcludesGoods = xdocRemExcludes.Element("Excludes").Elements().ToArray();
-                        return xdocRemExcludes;
                     }
-                    catch
+                    catch(WebException)
                     {
-                        return null;
+                        XElement excludes = new XElement("Excludes", new XAttribute("date", DateTime.Now.ToString("yyyy-MM-dd HH:mm")));
+                        xdocRemExcludes = XDocument.Parse(excludes.ToString());
                     }
+                    catch (Exception ex)
+                    {
+                        xdocRemExcludes = null;
+                        progress.Report(ex.Message);
+                    }
+                    ExcludesGoods = xdocRemExcludes?.Element("Excludes").Elements().ToArray();
+                    return xdocRemExcludes;
                 }, TaskCreationOptions.LongRunning);
 
                 //файл магазина локальный
@@ -598,16 +605,19 @@ namespace OHBEditor
                         {
                             progress.Report("Активных магазинов нет. Проверьте вкладку Список магазинов");
                         }
-                        Task[] subtasks = new Task[lstEnabled.Count()];
-                        int i = 0;
-                        foreach (XElement xUrl in lstEnabled) // (string addresxml in listShops)
+                        if (bDownloadShops)
                         {
-                            subtasks[i] = new Task(() => ListShops.Add(XDocument.Load(xUrl.Value)), TaskCreationOptions.LongRunning);
-                            subtasks[i].Start();
-                            i++;
+                            Task[] subtasks = new Task[lstEnabled.Count()];
+                            int i = 0;
+                            foreach (XElement xUrl in lstEnabled) // (string addresxml in listShops)
+                            {
+                                subtasks[i] = new Task(() => ListShops.Add(XDocument.Load(xUrl.Value)), TaskCreationOptions.LongRunning);
+                                subtasks[i].Start();
+                                i++;
+                            }
+                            Task.WaitAll(subtasks);
+                            progress.Report($"Загружено {i} выгрузок");
                         }
-                        Task.WaitAll(subtasks);
-                        progress.Report($"Загружено {i} выгрузок");
                         return xdocListShops;
                     }
                     catch
@@ -1011,9 +1021,9 @@ namespace OHBEditor
 
         }
 
-        public static void GetShopStatisticServer(IProgress<string> progress)
+        public static async Task GetShopStatisticServerAsync(IProgress<string> progress)
         {
-            //await LoadXMLAsync();
+            await LoadXMLAsync();
             progress.Report($"Сервер: Категорий - {xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(categories).Elements().Count()}\r\n" +
                             $"Сервер: Товаров - {xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements().Count()}\r\n" +
                             $"Сервер: Исключений - {xdocRemExcludes.Element("Excludes").Elements().Count()}\r\n" +
