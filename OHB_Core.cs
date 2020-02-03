@@ -41,12 +41,15 @@ namespace OHBEditor
         private static XElement shopTree;
         private static IEnumerable<XElement> ExcludesGoods { get; set; }//Collection, который содержит исключения которые не надо импортировать
         //private static XElement xExcludesGoods; //xElement, который содержит Categories и исключения
+        private static IEnumerable<XElement> NewGoods { get; set; }
 
         public static IProgress<string> progress;
         public static TreeView treeViewMaster { get; set; }
         public static TreeView treeViewExcludes { get; set; }
+        public static TreeView treeViewNewOffers { get; set; }
         public static TreeNode MasterNode { get; set; }
         public static TreeNode ExcludesNode { get; set; }
+        public static TreeNode NewOffersNode { get; set; }
         public static IList<TreeNode> TreeNodeDataShops
         {
             get
@@ -64,7 +67,7 @@ namespace OHBEditor
         public static XDocument xdocLocOHBShop { get; set; } //магазин local
         public static XDocument xdocLocExcludes { get; set; } //список исключений на сервере local
 
-        public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2)
+        public static async Task InitializationAsync(IProgress<string> _progress, TreeView treeView1, TreeView treeView2, TreeView treeViewNew)
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
@@ -75,6 +78,7 @@ namespace OHBEditor
             progress = _progress;
             treeViewMaster = treeView1;
             treeViewExcludes = treeView2;
+            treeViewNewOffers = treeViewNew;
 
             //Главная загрузка всех xml
             await LoadXMLAsync();
@@ -422,10 +426,6 @@ namespace OHBEditor
                 }
                 await Task.WhenAll(tasks); // ожидаем завершения задач после чего будет доступна поная секция Categories
 
-                //foreach (XElement addresxml in xdoc.Element("shops-yml").Descendants())
-                //{
-                //    TreeNode tn = await GetShopsForXMLAsync(addresxml.Value);
-                //}
                 #region Заполняем TreeView с магазинами
                 MasterNode.Tag = shopTree;
                 treeViewMaster.Nodes.Add(MasterNode);
@@ -433,6 +433,22 @@ namespace OHBEditor
                 #endregion
 
                 shopTree.Save(FolderOHB_Local + FileOHB_Shop);//сохраняем локальный файл
+
+                //TODO load except between local and remote shops 
+                #region Заполняем TreeViewNew новыми поступлениями
+                progress.Report("Новые поступления...");
+                NewGoods = shopTree.Element(shop).Element(offers).Elements()
+                    .Except(xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements(), new OfferComparer()).ToArray();
+                NewOffersNode = new TreeNode($"Новые поступления на {time_update} - {NewGoods.Count()}");
+                //Строим дерево
+                RebuildTree(NewOffersNode, shopTree.Element(shop).Element(categories).Elements(), NewGoods);
+                progress.Report("Новые поступления дерево построено!");
+                NewOffersNode.Tag = shopTree;
+                treeViewNewOffers.Nodes.Add(NewOffersNode);
+                treeViewNewOffers.Nodes[0].Expand();//раскрываем корневой
+                #endregion
+
+
 
                 СommonReport(time_update);
             }
@@ -507,14 +523,21 @@ namespace OHBEditor
                 //Check whether the object is null
                 if (object.ReferenceEquals(product, null)) return 0;
 
+                ////Get hash code for the Name field if it is not null.
+                //int hashProductName = product.Value == null ? 0 : product.Value.GetHashCode();
+
+                ////Get hash code for the Code field.
+                //int hashProductCode = product.Name.GetHashCode();
                 //Get hash code for the Name field if it is not null.
-                int hashProductName = product.Value == null ? 0 : product.Value.GetHashCode();
+                int hashProductName = product.Attribute(id).Value == null ? 0 : product.Attribute(id).Value.GetHashCode();
 
                 //Get hash code for the Code field.
-                int hashProductCode = product.Value.GetHashCode();
+                //int hashProductCode = product.Element(categoryId).Value == null ? 0 : product.Element(categoryId).Value.GetHashCode(); 
+
 
                 //Calculate the hash code for the product.
-                return hashProductName ^ hashProductCode;
+                //return hashProductName ^ hashProductCode;
+                return hashProductName;
             }
 
         }
@@ -991,15 +1014,15 @@ namespace OHBEditor
         //}
 
 
-        public static int GetCountOfItemsInTreeView(TreeNode node)
-        {
-            IEnumerable<TreeNode> res = new[] { node }.Concat(node.Nodes
-                                            .OfType<TreeNode>()
-                                            .Where(n => ((XElement)n.Tag).Name != "category")
-                                            .SelectMany(x => GetNodeAndChildren(x)));
+        //public static int GetCountOfItemsInTreeView(TreeNode node)
+        //{
+        //    IEnumerable<TreeNode> res = new[] { node }.Concat(node.Nodes
+        //                                    .OfType<TreeNode>()
+        //                                    .Where(n => ((XElement)n.Tag).Name != "category")
+        //                                    .SelectMany(x => GetNodeAndChildren(x)));
 
-            return res.Count();
-        }
+        //    return res.Count();
+        //}
 
         public static IEnumerable<XElement> GetXElementsFromTreeNode(TreeNode node, string name)
         {
