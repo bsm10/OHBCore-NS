@@ -36,6 +36,9 @@ namespace OHBEditor
         public static readonly XName date = "date";
         public static readonly XName url = "url";
         public static readonly XName available = "available";
+        public static readonly XName name = "name";
+        public static readonly XName vendor = "vendor";
+        public static readonly XName vendorCode = "vendorCode";
         #endregion
 
         private static XElement shopTree;
@@ -509,9 +512,10 @@ namespace OHBEditor
             // Products are equal if their names and product categories are equal.
             public bool Equals(XElement x, XElement y)
             {
-                //return x.Attribute("id").Value == y.Attribute("id").Value &&
-                //    x.Element("categoryId").Value == y.Element("categoryId").Value;
-                return x.Attribute("id").Value == y.Attribute("id").Value;
+                return x.Attribute("id").Value == y.Attribute("id").Value &&
+                    x.Element("name").Value == y.Element("name").Value;
+                    //&& x.Element("name").Value == y.Element("name").Value;
+                //return x.Attribute("id").Value == y.Attribute("id").Value;
 
             }
 
@@ -529,15 +533,28 @@ namespace OHBEditor
                 ////Get hash code for the Code field.
                 //int hashProductCode = product.Name.GetHashCode();
                 //Get hash code for the Name field if it is not null.
-                int hashProductName = product.Attribute(id).Value == null ? 0 : product.Attribute(id).Value.GetHashCode();
+                int hashProductId = product.Attribute(id).Value == null ? 0 : product.Attribute(id).Value.GetHashCode();
+                int hashProductName = product.Element(name).Value == null ? 0 : product.Element(name).Value.GetHashCode();
+                //int hashProductVendor;
+                //if (product.Element(vendorCode) != null)
+                //{
+                //    hashProductVendor = product.Element(vendorCode).Value == null ? 0 : product.Element(vendorCode).Value.GetHashCode();
+                //}
+                //else if (product.Element(vendor) != null)
+                //{
+                //    hashProductVendor = product.Element(vendor).Value == null ? 0 : product.Element(vendor).Value.GetHashCode();
+                //}
+                //else hashProductVendor = 1;
+
 
                 //Get hash code for the Code field.
                 //int hashProductCode = product.Element(categoryId).Value == null ? 0 : product.Element(categoryId).Value.GetHashCode(); 
 
 
-                //Calculate the hash code for the product.
-                //return hashProductName ^ hashProductCode;
-                return hashProductName;
+                    //Calculate the hash code for the product.
+                //return hashProductId * hashProductName * hashProductVendor;
+                return hashProductId ^ hashProductName;
+                //return hashProductName;
             }
 
         }
