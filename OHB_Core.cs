@@ -284,33 +284,32 @@ namespace OHBEditor
         {
             try
             {
+                Stopwatch sw = new Stopwatch();
+                Stopwatch sw1 = new Stopwatch();
+                sw1.Start();
                 //***************************************************************
                 Uri uri = new Uri(xYMLCatalog.Element(yml_catalog).Element(shop).Element(url)?.Value);
                 progress.Report(uri.OriginalString + " building tree...");
-                //XDocument xYMLCatalog = XDocument.Load(url_shop);
-                string nameShop = uri.Host; //+ uri.PathAndQuery.Replace("/", "-");
+                
+                string nameShop = uri.Host;
                 xYMLCatalog.Save(nameShop + ".xml");
                 //список категорий
                 IEnumerable<XElement> xCategories = xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements();
                 //список всех товаров в загрузке
                 IEnumerable<XElement> allGoods = xYMLCatalog.Element(yml_catalog).Element(shop).Element(offers).Elements();
-                //список товаров с учетом исключений | Без .ToArray() - очень долго считает
-                System.Diagnostics.Stopwatch sw = new Stopwatch();
                 sw.Start();
-                //IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new GoodsComparer()).ToArray();
+                //список товаров с учетом исключений | Без .ToArray() - очень долго считает
                 IEnumerable<XElement> ohbGoods = allGoods.Except(ExcludesGoods, new OfferComparer()).ToArray();
-                sw.Stop();
-                Debug.WriteLine($"{nameShop} except - {sw.Elapsed}");
                 //отсеиваим новые
-                IEnumerable<XElement> ohbGoodsServer = ohbGoods.Intersect(xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements(), new OfferComparer()).ToArray(); ;
+                IEnumerable<XElement> ohbGoodsServer = ohbGoods.Intersect(xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements(), new OfferComparer()).ToArray();
                 //новые добавляем
                 IEnumerable<XElement> ohbGoodsNew = ohbGoods.Except(ohbGoodsServer, new OfferComparer()).ToArray();
-                Debug.WriteLine($"{nameShop} load: {ohbGoods.Count()}, on server: {ohbGoodsServer.Count()}, new: {ohbGoodsNew.Count()} - elapsed: {sw.Elapsed}");
+                sw.Stop();
+                Debug.WriteLine($"{nameShop} load: {allGoods.Count()}, on server: {ohbGoodsServer.Count()}, local: {ohbGoods.Count()}, exclude: {allGoods.Count() - ohbGoods.Count()}, new: {ohbGoodsNew.Count()} - elapsed: {sw.Elapsed}");
 
                 //добавляем Категории в общее дерево
                 shopTree.Element(shop).Element(categories).Add(xYMLCatalog.Element(yml_catalog).Element(shop).Element(categories).Elements());
                 //добавляем Товары в общее дерево 
-                //shopTree.Element(shop).Element(offers).Add(ohbGoods);//добавляем все, что пришло в выгрузке
                 shopTree.Element(shop).Element(offers).Add(ohbGoodsServer);//добавляем только те, что есть на сервере
                 //добавляем новые товары в отдельный х-элемент
                 if(ohbGoodsNew.Count() > 0) 
@@ -321,8 +320,6 @@ namespace OHBEditor
 
                 //************************  строим дерево категорий-подкатегорий  ******************************
                 //Добавляем магазин в TreeView
-                //TreeNode rootCatalog = new TreeNode(xYMLCatalog.Element(yml_catalog).Element(shop).Element(url).Value +
-                //                        " - " + lastUpdate.ToString() + " (" + xCategories.Count() + ")");
                 if(ohbGoodsServer.Count() > 0)
                 {
                     TreeNode rootCatalog = new TreeNode($"{nameShop}");
@@ -342,13 +339,13 @@ namespace OHBEditor
                     RebuildTree(tnNewOffers, shopTree.Element(shop).Element(categories).Elements(), ohbGoodsNew);
                     NewOffersNode.Nodes.Add(tnNewOffers);
                 }
-
+                sw1.Stop();
                 progress.Report($"{nameShop} Ok!: категорий - " + xCategories.Count() + 
                                 ";\r\nтоваров в выгрузке - " + allGoods.Count() +
                                 ";\r\nтоваров с учетом исключений - " + ohbGoods.Count() +
                                 ";\r\nновых - " + count +
                                 ";\r\nобновлено: " + xYMLCatalog.Element(yml_catalog).Attribute(date).Value +
-                                "\r\n————————————————————————————————————————————————————————");
+                                $"\r\n————— Done! Elapsed time: {sw1.Elapsed} —————");
 
                
             }
@@ -466,23 +463,12 @@ namespace OHBEditor
 
                 shopTree.Save(FolderOHB_Local + FileOHB_Shop);//сохраняем локальный файл
 
-                //TODO load except between local and remote shops 
                 #region Заполняем TreeViewNew новыми поступлениями
-                //progress.Report("Новые поступления...");
-                //NewGoods = shopTree.Element(shop).Element(offers).Elements()
-                //    .Except(xdocRemOHBShop.Element(yml_catalog).Element(shop).Element(offers).Elements(), new OfferComparer()).ToArray();
-                //NewOffersNode = new TreeNode($"Новые поступления на {time_update} - {NewGoods.Count()}");
-
-                ////Строим дерево
-                //RebuildTree(NewOffersNode, shopTree.Element(shop).Element(categories).Elements(), NewGoods);
-                //progress.Report("Новые поступления дерево построено!");
-                //NewOffersNode.Tag = shopTree;
-                treeViewNewOffers.Nodes.Add(NewOffersNode);
-                treeViewNewOffers.Nodes[0].Expand();//раскрываем корневой
+                foreach(TreeNode tn in NewOffersNode.Nodes)
+                {
+                    treeViewNewOffers.Nodes.Add(tn);
+                }
                 #endregion
-
-
-
                 СommonReport(time_update);
             }
             catch (Exception e)
