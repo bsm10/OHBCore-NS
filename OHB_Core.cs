@@ -103,13 +103,15 @@ namespace OHBEditor
 
         private static void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
+            treeViewExcludes.BeginUpdate();
             treeViewExcludes.Nodes.Add(ExcludesNode);
             treeViewExcludes.Nodes[0].Expand();//раскрываем корневой
+            treeViewExcludes.EndUpdate();
         }
 
         private static void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
         {
-            AddExcludesInTreeView();
+            AddExcludesInTreeView(buildTree: true);
         }
 
         public static void AddExcludesInTreeView(bool buildTree = false)
@@ -457,17 +459,21 @@ namespace OHBEditor
 
                 #region Заполняем TreeView с магазинами
                 MasterNode.Tag = shopTree;
+                treeViewMaster.BeginUpdate();
                 treeViewMaster.Nodes.Add(MasterNode);
                 treeViewMaster.Nodes[0].Expand();//раскрываем корневой
+                treeViewMaster.EndUpdate();
                 #endregion
 
                 shopTree.Save(FolderOHB_Local + FileOHB_Shop);//сохраняем локальный файл
 
                 #region Заполняем TreeViewNew новыми поступлениями
-                foreach(TreeNode tn in NewOffersNode.Nodes)
+                treeViewNewOffers.BeginUpdate();
+                foreach (TreeNode tn in NewOffersNode.Nodes)
                 {
                     treeViewNewOffers.Nodes.Add(tn);
                 }
+                treeViewNewOffers.EndUpdate();
                 #endregion
                 СommonReport(time_update);
             }
@@ -572,6 +578,7 @@ namespace OHBEditor
             }
 
         }
+
         /// <summary>
         /// Загружаем магазин и исключения с сервера и локально 
         /// </summary>
@@ -801,14 +808,14 @@ namespace OHBEditor
         {
             XElement gd = (XElement)tnCategory.Tag;
             IEnumerable<XElement> goods = from XElement offer in xOffers
-                                          where offer.Element(categoryId).Value == gd.Attribute("id").Value
+                                          where offer.Element(categoryId).Value == gd.Attribute(id).Value
                                           select offer;
 
             if (goods.Count() == 0) return false;
 
             foreach (XElement g in goods)
             {
-                TreeNode trnOffer = new TreeNode(g.Element("name").Value);
+                TreeNode trnOffer = new TreeNode(g.Element(name).Value);
                 trnOffer.Tag = g;
                 tnCategory.Nodes.Add(trnOffer);
             }
@@ -835,7 +842,7 @@ namespace OHBEditor
                 xCategories = listCat.ToArray();
             }
 
-            Debug.WriteLine($"xOffers.Count {xOffers.Count()}, xCategories.Count {xCategories.Count()}");
+           // Debug.WriteLine($"xOffers.Count {xOffers.Count()}, xCategories.Count {xCategories.Count()}");
 
             //получаем товары, прязанные к существующим категориям
             IEnumerable<XElement> goods = (from XElement offer in xOffers
@@ -845,7 +852,7 @@ namespace OHBEditor
 
             //получаем товары, не прязанные к существующим категориям или у которых категория, которой нет в списке
             IEnumerable<XElement> exceptGoods = xOffers.Except(goods);
-            Debug.WriteLine($"exceptGoods.Count {exceptGoods.Count()}");
+            //Debug.WriteLine($"exceptGoods.Count {exceptGoods.Count()}");
 
             if (exceptGoods.Count() == 0) return;
 
@@ -894,6 +901,99 @@ namespace OHBEditor
         {
             try
             {
+                tnRoot.ForeColor = Color.DarkMagenta; //root node
+                //IEnumerable<XElement> collection = xCategories.Concat(xGoods);
+                IEnumerable<XElement> collection = xGoods.ToArray();
+                //for each category to add child nodes - subcategories and offers
+                //Parallel.ForEach(xCategories, (category) =>
+                //{
+                //    //categories node
+                //    TreeNode tNodeCategory = TreeNodeFromXElement(category);
+                //    //sequence of children elements
+                //    IEnumerable<XElement> childs = from XElement element in collection
+                //                                   where element.Element(categoryId)?.Value == category.Attribute(id).Value
+                //                                   //|| element.Attribute(parentId)?.Value == category.Attribute(id).Value
+                //                                   select element;
+                //    int count = childs.Count();
+                //    //if (count == 0) continue;//If the category has not children, don't add it to the tree, take the next element.
+                //    //add child to parent category node
+                //    foreach (XElement child in childs)
+                //    {
+                //        tNodeCategory.Nodes.Add(TreeNodeFromXElement(child));
+                //    }
+                //    tNodeCategory.Text += $" ({count})";
+                //    if (count > 0) tnRoot.Nodes.Add(tNodeCategory);
+
+                //});
+                foreach (XElement category in xCategories)
+                {
+                    //categories node
+                    TreeNode tNodeCategory = TreeNodeFromXElement(category);
+                    //sequence of children elements
+                    IEnumerable<XElement> childs = from XElement element in collection
+                                                   where element.Element(categoryId)?.Value == category.Attribute(id).Value
+                                                   //|| element.Attribute(parentId)?.Value == category.Attribute(id).Value
+                                                   select element;
+                    int count = childs.Count();
+                    if (count == 0) continue;//If the category has not children, don't add it to the tree, take the next element.
+                    //add child to parent category node
+                    foreach (XElement child in childs)
+                    {
+                        tNodeCategory.Nodes.Add(TreeNodeFromXElement(child));
+                    }
+                    tNodeCategory.Text += $" ({count})";
+
+                    tnRoot.Nodes.Add(tNodeCategory);
+                }
+                //добавляем товары не привязанные к категории(или с несуществующей категорией)
+                IEnumerable<XElement> unrelateChilds = xGoods.Except(GetTreeNodeOffers(tnRoot).Select(x => x.Tag as XElement));
+                foreach (XElement offer in unrelateChilds)
+                {
+                    tnRoot.Nodes.Add(TreeNodeFromXElement(offer));
+                }
+
+                //IEnumerable<string> attr = from XElement category in xCategories
+                //                           select category.Attribute(id).Value;
+                //IEnumerable<XElement> unrelateChilds = xGoods.Where(element => attr.Contains(element.Element(categoryId)?.Value) == false);
+                //foreach (XElement offer in unrelateChilds)
+                //{
+                //    TreeNode treeNode = TreeNodeFromXElement(offer);
+                //}
+
+
+
+                tnRoot.Text += $"({xGoods.Count()})";
+                return tnRoot;
+            }
+            catch (Exception e)
+            {
+                progress.Report("Error RebuildTree(" + tnRoot.Name + ") - " + e.Message);
+                return null;
+            }
+
+        }
+
+        private static TreeNode TreeNodeFromXElement(XElement xElement)
+        {
+            TreeNode tn;
+            if (xElement.Name == "category")
+            {
+                tn = new TreeNode(xElement.Value);
+                tn.ForeColor = Color.DarkSlateBlue;
+            }
+            else
+            {
+                tn = new TreeNode(xElement.Element(name).Value);
+            }
+            tn.Tag = xElement;
+            tn.Name = xElement.Value;
+            return tn;
+        }
+
+        public static TreeNode RebuildTree2(TreeNode tnRoot, IEnumerable<XElement> xCategories, IEnumerable<XElement> xGoods)
+        {
+            try
+            {
 
                 //берем корневые категории - которые не имеют parentId или parentId == 0
                 foreach (XElement rootCategory in xCategories.Where(e => e.Attributes(parentId).Count() == 0
@@ -901,7 +1001,6 @@ namespace OHBEditor
                 {
                     //tnRoot.NodeFont = new Font("Trebuchet MS", 12);
                     tnRoot.ForeColor = Color.DarkMagenta;
-
                     TreeNode tn = tnRoot.Nodes.Add(rootCategory.Attribute(id).Value, rootCategory.Value);
                     tn.Tag = rootCategory;
                     //заполняем корневые категории подкатегориями
@@ -923,9 +1022,9 @@ namespace OHBEditor
                  .Where(r => ((XElement)r.Tag)?.Name == "category")
                  .ToArray();
 
-                foreach(TreeNode tn in treeNodes)
+                foreach (TreeNode tn in treeNodes)
                 {
-                    int count = GetTreeNodeOffers(tn).Length; 
+                    int count = GetTreeNodeOffers(tn).Length;
                     tn.Text += $" ({count})";
                 }
 
@@ -941,7 +1040,8 @@ namespace OHBEditor
             }
 
         }
-        
+
+
         /// <summary>
         /// Удаляет категории, которые не имеют товаров
         /// </summary>
@@ -988,12 +1088,10 @@ namespace OHBEditor
             TreeNode[] treeNodes = treeNode.Nodes
              .OfType<TreeNode>()
              .SelectMany(x => GetNodeAndChildren(x))
-             //.Where(r => ((XElement)r.Tag).Name != "category")
              .Where(r => ((XElement)r.Tag)?.Name == "item" || ((XElement)r.Tag)?.Name == "offer")
              .ToArray();
             return treeNodes;
         }
-
 
         public static TreeNode[] GetCheckedTreeNode(TreeView treeView)
         {
@@ -1018,6 +1116,15 @@ namespace OHBEditor
              .ToArray();
             return treeNodes;
         }
+        //public static TreeNode SearchTreeNodeByTag(string seachString, TreeNodeCollection tnc)
+        //{
+        //    TreeNode treeNode = tnc
+        //     .OfType<TreeNode>()
+        //     .SelectMany(x => GetNodeAndChildren(x))
+        //     .FirstOrDefault(r => r.Tag.ToString() == seachString);
+        //    return treeNode;
+        //}
+
         public static TreeNode[] GetTreeNodes(TreeView treeView)
         {
             TreeNode[] treeNodes = treeView.Nodes
@@ -1041,6 +1148,9 @@ namespace OHBEditor
                                  .OfType<TreeNode>()
                                  .SelectMany(x => GetNodeAndChildren(x)));
         }
+
+
+
         //public static void GetCountOfItemsInTreeView(TreeNodeCollection tnc, ref int i)
         //{
         //    foreach (TreeNode node in tnc)
